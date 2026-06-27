@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 class Employee(BaseModel):
     employee_id: str
     name: str
-    designation: str
+    designation: Optional[str] = None
     department: Optional[str] = None
     email: Optional[str] = None
     hsn_code: Optional[str] = None   # service classification code
