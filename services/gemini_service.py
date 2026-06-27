@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import re
 import base64
+import time
 from pathlib import Path
 
 from google import genai
@@ -13,6 +14,26 @@ from utils.logger import get_logger
 logger = get_logger("gemini_service")
 
 _client = genai.Client(api_key=GEMINI_API_KEY)
+
+_RETRY_DELAYS = [3, 8, 20]  # seconds between retries
+
+
+def _call_with_retry(model: str, contents) -> object:
+    """Call Gemini with exponential backoff on 503/429 errors."""
+    last_exc = None
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            logger.warning(f"Gemini unavailable — retrying in {delay}s (attempt {attempt+1})")
+            time.sleep(delay)
+        try:
+            return _client.models.generate_content(model=model, contents=contents)
+        except Exception as e:
+            msg = str(e)
+            if "503" in msg or "UNAVAILABLE" in msg or "429" in msg or "quota" in msg.lower():
+                last_exc = e
+            else:
+                raise
+    raise last_exc
 
 EXTRACTION_PROMPT = """
 You are an intelligent document parser for an enterprise invoice automation system.
@@ -89,8 +110,19 @@ Rules:
 - For dates, always use YYYY-MM-DD format.
 - For currency, use ISO 4217 codes (INR, USD, GBP, EUR, AED, SGD).
 - Confidence score of 1.0 means you are certain. 0.5 means you guessed.
-- List every field you are uncertain about in ambiguous_fields.
+- Only list fields in ambiguous_fields if they are CRITICAL and cannot be inferred. Do NOT flag optional fields (hsn_code, billing_address, timezone, task_description) or fields with safe defaults (overtime_multiplier, payment_terms_days).
 - If handwriting is unclear, still attempt extraction and lower the confidence score.
+
+Client ID mapping (apply automatically when you see these codes in the document):
+- CUST001 → CL001, CUST002 → CL002, CUST003 → CL003, CUST004 → CL004,
+  CUST005 → CL005, CUST006 → CL006, CUST007 → CL007, CUST008 → CL008
+
+For payroll/salary documents that lack daily timesheet rows:
+- Set timesheet to [] (the system will synthesise entries from contracted_hours)
+- Set contracted_hours = days_worked * 8 if explicit daily count is given
+- Set billing_rate = basic_salary / contracted_hours if no explicit rate is given
+- Set billing_period_start to the first day of the pay period month
+- Set billing_period_end to the last day of the pay period month
 """
 
 
@@ -118,7 +150,7 @@ def call_gemini(file_path: Path, file_type: str) -> dict:
 
     if file_type == "image":
         mime, data = _encode_image(file_path)
-        response = _client.models.generate_content(
+        response = _call_with_retry(
             model=GEMINI_MODEL,
             contents=[
                 EXTRACTION_PROMPT,
@@ -128,7 +160,7 @@ def call_gemini(file_path: Path, file_type: str) -> dict:
 
     elif file_type == "pdf":
         pdf_bytes = file_path.read_bytes()
-        response = _client.models.generate_content(
+        response = _call_with_retry(
             model=GEMINI_MODEL,
             contents=[
                 EXTRACTION_PROMPT,
@@ -138,7 +170,7 @@ def call_gemini(file_path: Path, file_type: str) -> dict:
 
     elif file_type in ("excel", "csv"):
         text = _read_tabular(file_path, file_type)
-        response = _client.models.generate_content(
+        response = _call_with_retry(
             model=GEMINI_MODEL,
             contents=EXTRACTION_PROMPT + f"\n\nDocument content:\n{text}",
         )

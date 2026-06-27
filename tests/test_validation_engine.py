@@ -19,18 +19,18 @@ print("Testing engines/validation_engine.py...")
 # ── Factory helpers ────────────────────────────────────────────────────────────
 def make_results(
     hours_per_day: list = None,
-    contracted: float = 160.0,
+    contracted: float = 192.0,
     overtime_allowed: bool = True,
     policy: str = "pay_actual",
-    currency: str = "INR",
-    gst: bool = True,
-    gst_rate: float = 0.18,
-    billing_rate: float = 1500.0,
-    employee_id: str = "EMP001",
-    employee_name: str = "Arjun Sharma",
-    client_id: str = "CLI001",
-    client_name: str = "Infosys Ltd",
-    contract_id: str = "CON001",
+    currency: str = "AED",
+    gst: bool = False,
+    gst_rate: float = 0.0,
+    billing_rate: float = 50.7812,
+    employee_id: str = "EMP10001",
+    employee_name: str = "Carlos Smith",
+    client_id: str = "CL001",
+    client_name: str = "Emirates Steel Industries LLC",
+    contract_id: str = "CON-EMP10001-CL001",
     start_date: date = date(2024, 1, 1),
     end_date: date = date(2026, 12, 31),
     bp_start: date = date(2024, 6, 1),
@@ -166,9 +166,9 @@ print("✓ Rule 9 — currency mismatch detected")
 # ── 10. Duplicate invoice detection ──────────────────────────────────────────
 dr10, pr10 = make_results()
 existing = [{
-    "invoice_number": "INV-2024-CLI001-0001",
-    "employee_id": "EMP001",
-    "client_id": "CLI001",
+    "invoice_number": "INV-2026-CL001-0001",
+    "employee_id": "EMP10001",
+    "client_id": "CL001",
     "billing_period_start": "2024-06-01",
     "billing_period_end": "2024-06-30",
 }]

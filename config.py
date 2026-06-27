@@ -26,10 +26,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL   = "gemini-2.5-flash"
 
 # ── Confidence thresholds ──────────────────────────────────────────────────────
-CONFIDENCE_AUTO_PROCEED    = 0.95   # green — fully automatic
-CONFIDENCE_WARN_PROCEED    = 0.80   # yellow — proceed with warnings attached
-CONFIDENCE_HUMAN_REVIEW    = 0.60   # orange — route to human review queue
-# anything below CONFIDENCE_HUMAN_REVIEW → high-priority human review
+CONFIDENCE_AUTO_PROCEED    = 0.75   # green — fully automatic (invoice generated)
+CONFIDENCE_WARN_PROCEED    = 0.75   # same — proceed with warnings attached
+CONFIDENCE_HUMAN_REVIEW    = 0.75   # only route to review if strictly below 75%
+# anything below 0.75 → human review queue
 
 # ── Business rules ─────────────────────────────────────────────────────────────
 GST_RATE               = 0.18   # 18%

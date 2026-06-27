@@ -1598,5 +1598,85 @@
     "department": "Admin",
     "email": "omar.johnson@test.com",
     "hsn_code": null
+  },
+  {
+    "employee_id": "EMP001",
+    "name": "Rahul Mehta",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp001@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP002",
+    "name": "Nadia Al Zaabi",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp002@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP003",
+    "name": "James Okonkwo",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp003@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP005",
+    "name": "Omar Al Hashimi",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp005@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP006",
+    "name": "Sunita Verma",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp006@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP008",
+    "name": "Aisha Bint Khalid",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp008@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP010",
+    "name": "Meera Pillai",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp010@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP011",
+    "name": "Hassan Al Muhairi",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp011@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP013",
+    "name": "Vikram Singh",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp013@tasc.ae",
+    "hsn_code": null
+  },
+  {
+    "employee_id": "EMP099",
+    "name": "Ghost Employee",
+    "designation": "Consultant",
+    "department": "Operations",
+    "email": "emp099@tasc.ae",
+    "hsn_code": null
   }
 ]
