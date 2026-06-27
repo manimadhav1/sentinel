@@ -20,6 +20,7 @@ tests = [
     ("Phase 2b — Document Engine",    "tests/test_document_engine.py"),
     ("Phase 3  — Processing Engine",  "tests/test_processing_engine.py"),
     ("Phase 4  — Validation Engine",  "tests/test_validation_engine.py"),
+    ("Phase 5  — Invoice Engine",     "tests/test_invoice_engine.py"),
 ]
 
 results = []
