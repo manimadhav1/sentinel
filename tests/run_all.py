@@ -10,12 +10,16 @@ ROOT = Path(__file__).parent.parent
 PYTHON = sys.executable
 
 tests = [
-    ("Config",            "tests/test_config.py"),
-    ("Models — schema",   "tests/test_models_schema.py"),
-    ("Models — invoice",  "tests/test_models_invoice.py"),
-    ("Models — validation","tests/test_models_validation.py"),
-    ("Utils",             "tests/test_utils.py"),
-    ("Phase 1 (full)",    "tests/test_phase1.py"),
+    ("Phase 1 — Config",              "tests/test_config.py"),
+    ("Phase 1 — Models: schema",      "tests/test_models_schema.py"),
+    ("Phase 1 — Models: invoice",     "tests/test_models_invoice.py"),
+    ("Phase 1 — Models: validation",  "tests/test_models_validation.py"),
+    ("Phase 1 — Utils",               "tests/test_utils.py"),
+    ("Phase 1 — Full",                "tests/test_phase1.py"),
+    ("Phase 2a — Gemini Service",     "tests/test_gemini_service.py"),
+    ("Phase 2b — Document Engine",    "tests/test_document_engine.py"),
+    ("Phase 3  — Processing Engine",  "tests/test_processing_engine.py"),
+    ("Phase 4  — Validation Engine",  "tests/test_validation_engine.py"),
 ]
 
 results = []

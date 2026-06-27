@@ -1,0 +1,18 @@
+{
+  "contract_id": "CON-EMP10200-CL010",
+  "client_id": "CL010",
+  "employee_id": "EMP10200",
+  "billing_rate": 26.7857,
+  "currency": "AED",
+  "billing_type": "hourly",
+  "contracted_hours": 168.0,
+  "start_date": "2026-01-01",
+  "end_date": "2026-12-31",
+  "overtime_allowed": true,
+  "overtime_multiplier": 1.5,
+  "early_completion_policy": "pay_actual",
+  "late_penalty_per_hour": 0.0,
+  "gst_applicable": false,
+  "gst_rate": 0.0,
+  "payment_terms_days": 30
+}

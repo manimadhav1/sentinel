@@ -1,22 +1,102 @@
 [
   {
-    "client_id": "CLI001",
-    "company_name": "Infosys Ltd",
-    "billing_address": "Electronics City, Bangalore - 560100",
-    "country": "India",
-    "currency": "INR",
-    "gst_number": "29AABCI1682H1ZK",
-    "timezone": "Asia/Kolkata",
-    "contact_email": "billing@infosys.com"
+    "client_id": "CL001",
+    "company_name": "Emirates Steel Industries LLC",
+    "billing_address": "Abu Dhabi",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
   },
   {
-    "client_id": "CLI002",
-    "company_name": "Accenture UK",
-    "billing_address": "30 Fenchurch Street, London EC3M 3BD",
-    "country": "UK",
-    "currency": "GBP",
+    "client_id": "CL002",
+    "company_name": "Emaar Properties PJSC",
+    "billing_address": "Dubai",
+    "country": "UAE",
+    "currency": "AED",
     "gst_number": null,
-    "timezone": "Europe/London",
-    "contact_email": "ap@accenture.co.uk"
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL003",
+    "company_name": "Dubai Airports FZE",
+    "billing_address": "Dubai",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL004",
+    "company_name": "ADNOC Distribution PJSC",
+    "billing_address": "Abu Dhabi",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL005",
+    "company_name": "Majid Al Futtaim Retail LLC",
+    "billing_address": "Dubai",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL006",
+    "company_name": "Abu Dhabi Commercial Bank PJSC",
+    "billing_address": "Abu Dhabi",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL007",
+    "company_name": "DP World FZE",
+    "billing_address": "Dubai",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL008",
+    "company_name": "Etihad Airways PJSC",
+    "billing_address": "Abu Dhabi",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL009",
+    "company_name": "Aldar Properties PJSC",
+    "billing_address": "Abu Dhabi",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
+  },
+  {
+    "client_id": "CL010",
+    "company_name": "Transguard Group LLC",
+    "billing_address": "Dubai",
+    "country": "UAE",
+    "currency": "AED",
+    "gst_number": null,
+    "timezone": "Asia/Dubai",
+    "contact_email": "billing@test.com"
   }
 ]
