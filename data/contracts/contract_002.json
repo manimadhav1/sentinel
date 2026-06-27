@@ -1,0 +1,18 @@
+{
+  "contract_id": "CON002",
+  "client_id": "CLI002",
+  "employee_id": "EMP002",
+  "billing_rate": 85.0,
+  "currency": "GBP",
+  "billing_type": "hourly",
+  "contracted_hours": 80.0,
+  "start_date": "2024-01-01",
+  "end_date": "2026-12-31",
+  "overtime_allowed": false,
+  "overtime_multiplier": 1.5,
+  "early_completion_policy": "pay_full",
+  "late_penalty_per_hour": 0.0,
+  "gst_applicable": false,
+  "gst_rate": 0.0,
+  "payment_terms_days": 45
+}

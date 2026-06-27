@@ -1,0 +1,18 @@
+{
+  "contract_id": "CON001",
+  "client_id": "CLI001",
+  "employee_id": "EMP001",
+  "billing_rate": 1500.0,
+  "currency": "INR",
+  "billing_type": "hourly",
+  "contracted_hours": 160.0,
+  "start_date": "2024-01-01",
+  "end_date": "2026-12-31",
+  "overtime_allowed": true,
+  "overtime_multiplier": 1.5,
+  "early_completion_policy": "pay_actual",
+  "late_penalty_per_hour": 0.0,
+  "gst_applicable": true,
+  "gst_rate": 0.18,
+  "payment_terms_days": 30
+}

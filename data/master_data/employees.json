@@ -1,0 +1,18 @@
+[
+  {
+    "employee_id": "EMP001",
+    "name": "Arjun Sharma",
+    "designation": "Senior Software Engineer",
+    "department": "Engineering",
+    "email": "arjun.sharma@outsource.com",
+    "hsn_code": "998314"
+  },
+  {
+    "employee_id": "EMP002",
+    "name": "Priya Nair",
+    "designation": "Business Analyst",
+    "department": "Consulting",
+    "email": "priya.nair@outsource.com",
+    "hsn_code": "998311"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "client_id": "CLI001",
+    "company_name": "Infosys Ltd",
+    "billing_address": "Electronics City, Bangalore - 560100",
+    "country": "India",
+    "currency": "INR",
+    "gst_number": "29AABCI1682H1ZK",
+    "timezone": "Asia/Kolkata",
+    "contact_email": "billing@infosys.com"
+  },
+  {
+    "client_id": "CLI002",
+    "company_name": "Accenture UK",
+    "billing_address": "30 Fenchurch Street, London EC3M 3BD",
+    "country": "UK",
+    "currency": "GBP",
+    "gst_number": null,
+    "timezone": "Europe/London",
+    "contact_email": "ap@accenture.co.uk"
+  }
+]
