@@ -1,7 +1,8 @@
 """
-Invoice Browser — view, preview, and download invoices for all clients.
+Invoice Browser — clean multi-client invoice viewer with inline preview and downloads.
 """
 import json
+import requests
 import streamlit as st
 import sys
 from pathlib import Path
@@ -9,10 +10,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.database_service import DatabaseService
 from utils.invoice_html import render_invoice_html
+from streamlit_mic_recorder import mic_recorder
+import config
 
-st.set_page_config(page_title="Invoice Preview — Sentinel", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Invoices — Sentinel", page_icon="📄", layout="wide")
 
-# ── Global CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 [data-testid="stSidebarNav"] { display: none !important; }
@@ -21,41 +23,27 @@ st.markdown("""
 [data-testid="stSidebar"] a { color: #CBD5E1 !important; text-decoration: none;
     display: block; padding: 8px 12px; border-radius: 6px; margin: 2px 0; font-size: 14px; }
 [data-testid="stSidebar"] a:hover { background: #1E3A5F !important; color: #fff !important; }
-div[data-testid="stTabs"] button { color: #94A3B8 !important; }
+
+/* Clean invoice row */
+.inv-row { display:flex; align-items:center; gap:12px; padding:12px 16px;
+           border-radius:8px; margin:4px 0; cursor:pointer; }
+.inv-row:hover { background:#1E3A5F; }
+.inv-row.sel   { background:#1E3A5F; border-left:3px solid #2563EB; }
+
+div[data-testid="stTabs"] button { color: #94A3B8 !important; font-size:13px; }
 div[data-testid="stTabs"] button[aria-selected="true"] {
     color: #F1F5F9 !important; border-bottom-color: #2563EB !important; }
-
-/* Invoice card */
-.inv-card { background: #1E293B; border-radius: 8px; padding: 12px 14px;
-            margin-bottom: 8px; border-left: 3px solid #334155; cursor: pointer;
-            transition: border-color 0.15s; }
-.inv-card:hover { border-left-color: #2563EB; }
-.inv-card.active { border-left-color: #2563EB; background: #1A2E47; }
-.inv-card .inv-num  { color: #93C5FD; font-size: 12px; font-weight: 700; }
-.inv-card .inv-name { color: #F1F5F9; font-size: 13px; font-weight: 600; margin: 2px 0; }
-.inv-card .inv-sub  { color: #64748B; font-size: 11px; }
-.inv-card .inv-amt  { color: #4ADE80; font-size: 13px; font-weight: 700; text-align: right; }
-
-/* Stat pill */
-.stat-pill { display:inline-block; padding:3px 10px; border-radius:20px;
-             font-size:11px; font-weight:700; margin-right:4px; }
 </style>
 """, unsafe_allow_html=True)
 
-STATUS_COLORS = {
-    "GENERATED":  "#2563EB",
-    "DISPATCHED": "#7C3AED",
-    "PAID":       "#16A34A",
-    "FLAGGED":    "#DC2626",
-}
-STATUS_BG = {
-    "GENERATED":  "#172554",
-    "DISPATCHED": "#2E1065",
-    "PAID":       "#052e16",
-    "FLAGGED":    "#450a0a",
+_STATUS_COLOR = {
+    "GENERATED":  ("#2563EB", "#172554"),
+    "DISPATCHED": ("#7C3AED", "#2E1065"),
+    "PAID":       ("#16A34A", "#052e16"),
+    "FLAGGED":    ("#DC2626", "#450a0a"),
 }
 
-# ── Sidebar nav ────────────────────────────────────────────────────────────────
+# ── Sidebar ────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
         "<div style='padding:16px 8px 8px'>"
@@ -69,145 +57,142 @@ with st.sidebar:
     st.page_link("pages/03_invoice_preview.py", label="📄  Invoice Preview")
     st.page_link("pages/04_dashboard.py",       label="📊  Dashboard")
 
-# ── Load all invoices ──────────────────────────────────────────────────────────
+# ── Load data ──────────────────────────────────────────────────
 all_invoices = DatabaseService.list_invoices(limit=500)
 
-# ── Page header ────────────────────────────────────────────────────────────────
-st.markdown("<h2 style='color:#F1F5F9;margin:0'>📄 Invoice Browser</h2>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='color:#94A3B8;margin:0 0 8px'>Browse, preview, and download invoices for all clients.</p>",
-    unsafe_allow_html=True,
-)
+st.markdown("<h2 style='color:#F1F5F9;margin:0 0 4px'>📄 Invoices</h2>", unsafe_allow_html=True)
 
 if not all_invoices:
-    st.info("No invoices generated yet. Upload a timesheet on the **Upload & Process** page.")
+    st.info("No invoices yet. Upload a timesheet on the **Upload & Process** page.")
     st.stop()
 
-# ── Summary strip ──────────────────────────────────────────────────────────────
-total_invoices = len(all_invoices)
-unique_clients = len({i["client_id"] for i in all_invoices})
-unique_employees = len({i["employee_id"] for i in all_invoices})
-total_aed = sum(i["total_amount"] for i in all_invoices if i.get("currency") == "AED")
+# ── Top stats bar ──────────────────────────────────────────────
+n_inv  = len(all_invoices)
+n_cli  = len({i["client_id"] for i in all_invoices})
+n_emp  = len({i["employee_id"] for i in all_invoices})
+n_paid = sum(1 for i in all_invoices if i["status"] == "PAID")
+total_billed = sum(i["total_amount"] for i in all_invoices)
 
-s1, s2, s3, s4 = st.columns(4)
-s1.metric("Total Invoices",  total_invoices)
-s2.metric("Clients Covered", unique_clients)
-s3.metric("Employees",       unique_employees)
-s4.metric("Total Billed",    f"AED {total_aed:,.2f}")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Invoices",  n_inv)
+c2.metric("Clients",         n_cli)
+c3.metric("Employees",       n_emp)
+c4.metric("Paid",            n_paid)
+c5.metric("Total Billed",    f"AED {total_billed:,.0f}")
 
 st.markdown("<hr style='border-color:#1E293B;margin:12px 0'>", unsafe_allow_html=True)
 
-# ── Determine default selection ────────────────────────────────────────────────
+# ── Default selection ──────────────────────────────────────────
 sess = st.session_state.get("sentinel_state", {})
-default_num = None
-if sess.get("success") and sess.get("invoice_number"):
-    default_num = sess["invoice_number"]
-elif st.session_state.get("last_invoice_number"):
-    default_num = st.session_state["last_invoice_number"]
-if not default_num and all_invoices:
-    default_num = all_invoices[0]["invoice_number"]
-
+default_num = (
+    (sess.get("invoice_number") if sess.get("success") else None)
+    or st.session_state.get("last_invoice_number")
+    or all_invoices[0]["invoice_number"]
+)
 if "preview_selected" not in st.session_state:
     st.session_state["preview_selected"] = default_num
 
-# ── MAIN LAYOUT: left filter+list | right preview ─────────────────────────────
-col_list, col_preview = st.columns([1, 2], gap="medium")
+# ── Main layout ────────────────────────────────────────────────
+left, right = st.columns([5, 8], gap="large")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LEFT PANEL — Filters + Invoice List
-# ══════════════════════════════════════════════════════════════════════════════
-with col_list:
-    st.markdown("<p style='color:#94A3B8;font-size:11px;font-weight:700;letter-spacing:1px;margin:0 0 8px'>FILTER & SELECT</p>",
-                unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════
+# LEFT: Filter + Invoice List
+# ══════════════════════════════════════════════════════════════
+with left:
+    # ── Filters ────────────────────────────────────────────────
+    search = st.text_input("🔍  Search client or employee", placeholder="Type to filter…",
+                           key="inv_search", label_visibility="collapsed").strip().lower()
 
-    # ── Client filter ──────────────────────────────────────────────────────────
-    client_options = sorted({(i["client_id"], i.get("client_name") or i["client_id"])
-                              for i in all_invoices}, key=lambda x: x[0])
-    client_labels  = ["All Clients"] + [f"{cid} — {cname}" for cid, cname in client_options]
-    client_ids     = [None] + [cid for cid, _ in client_options]
+    f1, f2 = st.columns(2)
+    client_ids   = sorted({i["client_id"] for i in all_invoices})
+    client_names = {i["client_id"]: (i.get("client_name") or i["client_id"]) for i in all_invoices}
+    client_opts  = ["All clients"] + [f"{cid} — {client_names[cid]}" for cid in client_ids]
 
-    sel_client_label = st.selectbox("Client", client_labels, key="filter_client")
-    sel_client_id    = client_ids[client_labels.index(sel_client_label)]
+    status_opts = ["All statuses"] + sorted({i["status"] for i in all_invoices})
 
-    # ── Status filter ──────────────────────────────────────────────────────────
-    status_options = ["All Statuses"] + sorted({i["status"] for i in all_invoices})
-    sel_status     = st.selectbox("Status", status_options, key="filter_status")
-    sel_status_val = None if sel_status == "All Statuses" else sel_status
+    sel_client = f1.selectbox("Client", client_opts, key="f_client", label_visibility="collapsed")
+    sel_status = f2.selectbox("Status", status_opts, key="f_status", label_visibility="collapsed")
 
-    # ── Employee search ────────────────────────────────────────────────────────
-    emp_search = st.text_input("Search employee", placeholder="Type name…", key="filter_emp").strip().lower()
-
-    # ── Apply filters ──────────────────────────────────────────────────────────
-    filtered = all_invoices
-    if sel_client_id:
-        filtered = [i for i in filtered if i["client_id"] == sel_client_id]
-    if sel_status_val:
-        filtered = [i for i in filtered if i["status"] == sel_status_val]
-    if emp_search:
-        filtered = [i for i in filtered if emp_search in (i.get("employee_name") or "").lower()]
+    # Apply filters
+    fil = all_invoices
+    if sel_client != "All clients":
+        cid_filter = sel_client.split(" — ")[0]
+        fil = [i for i in fil if i["client_id"] == cid_filter]
+    if sel_status != "All statuses":
+        fil = [i for i in fil if i["status"] == sel_status]
+    if search:
+        fil = [i for i in fil if
+               search in (i.get("client_name") or "").lower()
+               or search in (i.get("employee_name") or "").lower()
+               or search in i["invoice_number"].lower()]
 
     st.markdown(
-        f"<p style='color:#475569;font-size:12px;margin:8px 0 6px'>"
-        f"Showing <b style='color:#F1F5F9'>{len(filtered)}</b> of {total_invoices} invoices</p>",
+        f"<p style='color:#475569;font-size:12px;margin:6px 0 4px'>"
+        f"{len(fil)} invoice{'s' if len(fil)!=1 else ''} shown</p>",
         unsafe_allow_html=True,
     )
 
-    # ── Invoice cards ──────────────────────────────────────────────────────────
-    if not filtered:
-        st.info("No invoices match the current filters.")
+    # ── Invoice list ───────────────────────────────────────────
+    if not fil:
+        st.info("No invoices match the filter.")
     else:
-        for inv_row in filtered:
+        for inv_row in fil:
             num      = inv_row["invoice_number"]
             is_sel   = (st.session_state["preview_selected"] == num)
-            s_color  = STATUS_COLORS.get(inv_row["status"], "#64748B")
-            cur      = inv_row.get("currency", "AED")
-            amount   = inv_row.get("total_amount", 0)
+            sc, sbg  = _STATUS_COLOR.get(inv_row["status"], ("#64748B", "#1E293B"))
             emp      = inv_row.get("employee_name") or inv_row.get("employee_id", "—")
             cname    = inv_row.get("client_name") or inv_row.get("client_id", "—")
-            period   = f"{inv_row.get('billing_period_start','')[:7]}"  # YYYY-MM
+            cur      = inv_row.get("currency", "AED")
+            amount   = inv_row.get("total_amount", 0)
+            period   = inv_row.get("billing_period_start", "")[:7]
             bg       = "#1A2E47" if is_sel else "#1E293B"
-            border   = "#2563EB" if is_sel else "#334155"
+            border_l = "border-left:3px solid #2563EB;" if is_sel else "border-left:3px solid transparent;"
 
-            # Render card as HTML for styling
             st.markdown(
-                f"<div style='background:{bg};border-radius:8px;padding:10px 12px;"
-                f"margin-bottom:6px;border-left:3px solid {border}'>"
+                f"<div style='background:{bg};{border_l}border-radius:8px;"
+                f"padding:10px 14px;margin:3px 0'>"
                 f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
-                f"<div>"
-                f"<span style='color:#93C5FD;font-size:11px;font-weight:700'>{num}</span>"
-                f"<span style='float:right;background:{s_color}22;color:{s_color};"
-                f"border:1px solid {s_color}55;padding:1px 8px;border-radius:10px;"
-                f"font-size:10px;font-weight:700'>{inv_row['status']}</span><br>"
-                f"<span style='color:#F1F5F9;font-size:13px;font-weight:600'>{cname}</span><br>"
-                f"<span style='color:#94A3B8;font-size:11px'>{emp}</span>"
-                f"<span style='color:#475569;font-size:11px'> · {period}</span>"
-                f"</div></div>"
-                f"<div style='margin-top:6px;display:flex;justify-content:space-between;align-items:center'>"
-                f"<span style='color:#475569;font-size:11px'>{inv_row.get('contract_id','—')}</span>"
-                f"<span style='color:#4ADE80;font-size:14px;font-weight:800'>{cur} {amount:,.2f}</span>"
-                f"</div></div>",
+                f"<div style='flex:1;min-width:0'>"
+                f"<div style='display:flex;align-items:center;gap:8px'>"
+                f"<span style='color:#93C5FD;font-size:11px;font-weight:700;white-space:nowrap'>{num}</span>"
+                f"<span style='background:{sbg};color:{sc};border:1px solid {sc}44;"
+                f"padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap'>"
+                f"{inv_row['status']}</span></div>"
+                f"<p style='color:#F1F5F9;font-size:13px;font-weight:600;margin:3px 0 1px;"
+                f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{cname}</p>"
+                f"<p style='color:#64748B;font-size:11px;margin:0'>{emp} · {period}</p>"
+                f"</div>"
+                f"<div style='text-align:right;margin-left:8px;flex-shrink:0'>"
+                f"<p style='color:#4ADE80;font-size:14px;font-weight:700;margin:0'>"
+                f"{cur} {amount:,.0f}</p>"
+                f"</div></div></div>",
                 unsafe_allow_html=True,
             )
-            if st.button("View →", key=f"sel_{num}", use_container_width=True,
+            if st.button("Open →", key=f"open_{num}",
+                         use_container_width=True,
                          type="primary" if is_sel else "secondary"):
                 st.session_state["preview_selected"] = num
                 st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# RIGHT PANEL — Invoice Preview
-# ══════════════════════════════════════════════════════════════════════════════
-with col_preview:
+# ══════════════════════════════════════════════════════════════
+# RIGHT: Invoice Detail Panel
+# ══════════════════════════════════════════════════════════════
+with right:
     sel_num = st.session_state.get("preview_selected")
     if not sel_num:
-        st.info("Select an invoice from the list on the left.")
+        st.markdown(
+            "<div style='background:#1E293B;border-radius:12px;padding:48px;text-align:center'>"
+            "<p style='color:#475569;font-size:16px'>← Select an invoice to preview it here</p></div>",
+            unsafe_allow_html=True,
+        )
         st.stop()
 
     inv = DatabaseService.get_invoice(sel_num)
     if not inv:
-        st.error(f"Invoice {sel_num} not found in database.")
+        st.error(f"Invoice {sel_num} not found.")
         st.stop()
 
-    # ── Reconstruct full invoice dict from invoice_json ────────────────────────
+    # Reconstruct full data
     inv_json = {}
     if inv.get("invoice_json"):
         try:
@@ -215,163 +200,282 @@ with col_preview:
         except Exception:
             pass
 
-    billing = inv_json.get("billing", {})
-    if not billing:
-        billing = {
-            "currency":         inv.get("currency", "AED"),
-            "subtotal":         inv.get("total_amount", 0),
-            "gst_amount":       inv.get("gst_amount", 0),
-            "total_amount":     inv.get("total_amount", 0),
-            "total_amount_inr": inv.get("total_amount_inr", 0),
-            "line_items":       [],
-            "billing_notes":    [],
-        }
-
+    billing = inv_json.get("billing", {}) or {
+        "currency":         inv.get("currency", "AED"),
+        "subtotal":         inv.get("total_amount", 0),
+        "gst_amount":       inv.get("gst_amount", 0),
+        "total_amount":     inv.get("total_amount", 0),
+        "total_amount_inr": inv.get("total_amount_inr", 0),
+        "line_items":       [],
+        "billing_notes":    [],
+    }
     full_inv = {**inv, **inv_json, "billing": billing}
 
-    # ── Invoice header card ────────────────────────────────────────────────────
-    _sb   = STATUS_COLORS.get(inv["status"], "#64748B")
-    _sbbg = STATUS_BG.get(inv["status"], "#1E293B")
-    cur   = inv.get("currency", "AED")
+    sc, sbg = _STATUS_COLOR.get(inv["status"], ("#64748B", "#1E293B"))
+    cur = inv.get("currency", "AED")
 
-    st.markdown(
-        f"<div style='background:linear-gradient(135deg,#0F1F3D,#0F2027);"
-        f"border:1px solid {_sb}55;border-radius:12px;padding:18px 22px;margin-bottom:14px'>"
-        f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
-        f"<div>"
-        f"<p style='color:#94A3B8;font-size:10px;font-weight:700;letter-spacing:1px;margin:0'>INVOICE</p>"
-        f"<h2 style='color:#F1F5F9;font-size:20px;margin:2px 0'>{inv['invoice_number']}</h2>"
-        f"<p style='color:#64748B;font-size:12px;margin:2px 0'>"
-        f"<b style='color:#CBD5E1'>{inv.get('client_name') or inv.get('client_id','—')}</b>"
-        f" &nbsp;·&nbsp; {inv.get('employee_name','—')}"
-        f" &nbsp;·&nbsp; {inv.get('billing_period_start','')[:7]}"
-        f"</p>"
-        f"<p style='color:#475569;font-size:11px;margin:2px 0'>"
-        f"Contract: {inv.get('contract_id','—')} &nbsp;·&nbsp; "
-        f"Issued: {inv.get('invoice_date','—')} &nbsp;·&nbsp; "
-        f"Due: {inv.get('due_date','—')}</p>"
-        f"</div>"
-        f"<div style='text-align:right'>"
-        f"<span style='background:{_sbbg};color:{_sb};border:1px solid {_sb}55;"
-        f"padding:4px 14px;border-radius:20px;font-size:11px;font-weight:700'>"
-        f"{inv['status']}</span>"
-        f"<p style='color:#4ADE80;font-size:26px;font-weight:800;margin:8px 0 0'>"
-        f"{cur} {inv['total_amount']:,.2f}</p>"
-        f"<p style='color:#475569;font-size:12px;margin:0'>≈ ₹{inv['total_amount_inr']:,.2f}</p>"
-        f"</div></div></div>",
-        unsafe_allow_html=True,
-    )
+    # ── Header ─────────────────────────────────────────────────
+    h1, h2 = st.columns([3, 2])
+    with h1:
+        st.markdown(
+            f"<p style='color:#94A3B8;font-size:11px;font-weight:700;letter-spacing:1px;margin:0'>INVOICE</p>"
+            f"<h2 style='color:#F1F5F9;font-size:20px;margin:2px 0 6px'>{inv['invoice_number']}</h2>"
+            f"<p style='color:#CBD5E1;font-size:14px;font-weight:600;margin:0'>"
+            f"{inv.get('client_name') or inv.get('client_id','—')}</p>"
+            f"<p style='color:#64748B;font-size:12px;margin:2px 0'>"
+            f"{inv.get('employee_name','—')} · {inv.get('billing_period_start','')[:7]}</p>",
+            unsafe_allow_html=True,
+        )
+    with h2:
+        st.markdown(
+            f"<div style='text-align:right'>"
+            f"<span style='background:{sbg};color:{sc};border:1px solid {sc}44;"
+            f"padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700'>"
+            f"{inv['status']}</span>"
+            f"<p style='color:#4ADE80;font-size:26px;font-weight:800;margin:8px 0 2px'>"
+            f"{cur} {inv['total_amount']:,.2f}</p>"
+            f"<p style='color:#475569;font-size:12px;margin:0'>₹{inv['total_amount_inr']:,.2f}</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Quick KPIs ─────────────────────────────────────────────────────────────
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Regular Hrs",  f"{inv.get('regular_hours', 0):,.1f}h")
-    k2.metric("OT Hrs",       f"{inv.get('overtime_hours', 0):,.1f}h")
-    k3.metric("GST",          f"{cur} {inv.get('gst_amount', 0):,.2f}")
-    k4.metric("Total",        f"{cur} {inv['total_amount']:,.2f}")
-    k5.metric("INR Total",    f"₹{inv['total_amount_inr']:,.2f}")
+    # ── Download buttons (always visible) ──────────────────────
+    pdf_path   = inv.get("pdf_path") or inv_json.get("pdf_path", "")
+    excel_path = inv.get("excel_path") or inv_json.get("excel_path", "")
 
-    # ── Download buttons (always visible, above tabs) ──────────────────────────
-    st.markdown("<p style='color:#94A3B8;font-size:11px;font-weight:700;letter-spacing:1px;margin:10px 0 6px'>DOWNLOAD</p>",
-                unsafe_allow_html=True)
-    dl1, dl2, dl3 = st.columns([2, 2, 1])
-
-    pdf_path   = inv.get("pdf_path") or inv_json.get("pdf_path")
-    excel_path = inv.get("excel_path") or inv_json.get("excel_path")
+    da, db, dc = st.columns([3, 3, 2])
 
     if pdf_path and Path(pdf_path).exists():
         with open(pdf_path, "rb") as f:
-            dl1.download_button(
-                "📄 Download PDF",
-                data=f.read(),
-                file_name=Path(pdf_path).name,
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key=f"pdf_{sel_num}",
-            )
+            da.download_button("📄 Download PDF", f.read(),
+                file_name=Path(pdf_path).name, mime="application/pdf",
+                use_container_width=True, type="primary", key=f"dl_pdf_{sel_num}")
     else:
-        dl1.caption("PDF not on disk")
+        da.caption("PDF not available")
 
     if excel_path and Path(excel_path).exists():
         with open(excel_path, "rb") as f:
-            dl2.download_button(
-                "📊 Download ERP Excel",
-                data=f.read(),
+            db.download_button("📊 Download Excel", f.read(),
                 file_name=Path(excel_path).name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key=f"xls_{sel_num}",
-            )
+                use_container_width=True, key=f"dl_xls_{sel_num}")
     else:
-        dl2.caption("Excel not on disk")
+        db.caption("Excel not available")
 
     # Status update
     statuses = ["GENERATED", "DISPATCHED", "PAID", "FLAGGED"]
     cur_idx  = statuses.index(inv["status"]) if inv["status"] in statuses else 0
-    new_status = dl3.selectbox("Status", statuses, index=cur_idx,
-                                key=f"status_{sel_num}", label_visibility="collapsed")
-    if new_status != inv["status"]:
-        DatabaseService.update_invoice_status(sel_num, new_status)
-        st.success(f"Status updated to {new_status}")
+    new_st   = dc.selectbox("", statuses, index=cur_idx,
+                             key=f"st_{sel_num}", label_visibility="collapsed")
+    if new_st != inv["status"]:
+        DatabaseService.update_invoice_status(sel_num, new_st)
         st.rerun()
 
     st.markdown("<hr style='border-color:#1E293B;margin:10px 0'>", unsafe_allow_html=True)
 
-    # ── Tabs: Preview | Line Items | Audit ────────────────────────────────────
-    t_prev, t_lines, t_audit = st.tabs(["📄 Invoice Preview", "📋 Line Items & Details", "🔎 Audit Log"])
+    # ── Tabs ───────────────────────────────────────────────────
+    t1, t2, t3, t4 = st.tabs(["📄  Preview", "📋  Details & Line Items", "🔎  Audit Log", "🎙️  Voice"])
 
-    with t_prev:
-        st.markdown(
-            "<p style='color:#64748B;font-size:11px;margin:0 0 8px'>"
-            "Inline preview — identical to the PDF output.</p>",
-            unsafe_allow_html=True,
-        )
+    with t1:
         html = render_invoice_html(full_inv)
-        st.components.v1.html(html, height=700, scrolling=True)
+        st.components.v1.html(html, height=680, scrolling=True)
 
-    with t_lines:
-        line_items = billing.get("line_items", [])
-        if line_items:
+    with t2:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Billing Period**")
+            st.markdown(f"From: {inv.get('billing_period_start','—')}")
+            st.markdown(f"To: {inv.get('billing_period_end','—')}")
+            st.markdown(f"Invoice Date: {inv.get('invoice_date','—')}")
+            st.markdown(f"Due Date: {inv.get('due_date','—')}")
+            st.markdown(f"Contract: `{inv.get('contract_id','—')}`")
+        with col_b:
+            st.markdown("**Financials**")
+            sub = billing.get("subtotal", inv.get("total_amount", 0))
+            gst = billing.get("gst_amount", inv.get("gst_amount", 0))
+            tot = billing.get("total_amount", inv.get("total_amount", 0))
+            st.markdown(f"Regular: {inv.get('regular_hours',0):.1f}h")
+            st.markdown(f"Overtime: {inv.get('overtime_hours',0):.1f}h")
+            st.markdown(f"Subtotal: {cur} {sub:,.2f}")
+            st.markdown(f"GST: {cur} {gst:,.2f}")
+            st.markdown(f"**Total: {cur} {tot:,.2f}**")
+
+        items = billing.get("line_items", [])
+        if items:
+            st.markdown("**Line Items**")
             import pandas as pd
-            df = pd.DataFrame(line_items)
+            df = pd.DataFrame(items)
             if "amount" in df.columns:
                 df["amount"] = df["amount"].apply(lambda x: f"{cur} {float(x):,.2f}")
             if "rate" in df.columns:
                 df["rate"] = df["rate"].apply(lambda x: f"{cur} {float(x):,.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No line items on record for this invoice.")
-
-        st.markdown("<hr style='border-color:#1E293B;margin:12px 0'>", unsafe_allow_html=True)
-
-        # Financial summary
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            st.markdown("**Billing Period**")
-            st.markdown(f"From: `{inv.get('billing_period_start','—')}`")
-            st.markdown(f"To: `{inv.get('billing_period_end','—')}`")
-            st.markdown(f"Invoice Date: `{inv.get('invoice_date','—')}`")
-            st.markdown(f"Due Date: `{inv.get('due_date','—')}`")
-        with fc2:
-            st.markdown("**Financial Summary**")
-            subtotal = billing.get("subtotal", inv.get("total_amount", 0))
-            gst      = billing.get("gst_amount", inv.get("gst_amount", 0))
-            total    = billing.get("total_amount", inv.get("total_amount", 0))
-            st.markdown(f"Subtotal: `{cur} {subtotal:,.2f}`")
-            st.markdown(f"GST: `{cur} {gst:,.2f}`")
-            st.markdown(f"**Total: `{cur} {total:,.2f}`**")
-            st.markdown(f"INR: `₹{inv.get('total_amount_inr', 0):,.2f}`")
 
         for note in billing.get("billing_notes", []):
             st.caption(f"• {note}")
 
-    with t_audit:
+    with t3:
         log = DatabaseService.get_audit_log(sel_num)
         if not log:
-            st.info("No audit events recorded for this invoice.")
+            st.info("No audit events for this invoice.")
         else:
             for entry in log:
                 st.markdown(
-                    f"`{entry.get('created_at','—')}` — **{entry['event_type']}**"
-                    + (f": {entry['details']}" if entry.get("details") else "")
+                    f"`{entry.get('created_at','—')}` **{entry['event_type']}**"
+                    + (f" — {entry['details']}" if entry.get("details") else "")
                 )
+
+    # ── Voice tab ───────────────────────────────────────────────
+    with t4:
+        if not config.SMALLEST_API_KEY:
+            st.warning("Add `SMALLEST_API_KEY` to your `.env` file to enable voice features.")
+        else:
+            # ── TTS card ───────────────────────────────────────
+            st.markdown(
+                "<div style='background:#0F2027;border:1px solid #2563EB;border-radius:12px;"
+                "padding:20px 22px;margin-bottom:16px'>"
+                "<p style='color:#93C5FD;font-size:11px;font-weight:700;letter-spacing:1px;margin:0 0 4px'>"
+                "INVOICE NARRATOR</p>"
+                "<p style='color:#F1F5F9;font-size:15px;font-weight:600;margin:0 0 4px'>"
+                "🔊 Read this invoice aloud</p>"
+                "<p style='color:#64748B;font-size:12px;margin:0'>Smallest.ai generates a spoken "
+                "summary using a natural voice.</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            narrative = (
+                f"Invoice {inv.get('invoice_number')} for "
+                f"{inv.get('client_name') or inv.get('client_id', 'the client')}. "
+                f"Employee {inv.get('employee_name', 'unknown')} worked from "
+                f"{inv.get('billing_period_start', '')} to {inv.get('billing_period_end', '')}. "
+                f"Total amount due: {inv.get('currency', 'AED')} {inv['total_amount']:,.2f}, "
+                f"equivalent to {inv['total_amount_inr']:,.2f} Indian Rupees. "
+                f"Status: {inv.get('status', 'GENERATED')}."
+            )
+            st.caption(f"Will read: \"{narrative}\"")
+
+            if st.button("🔊 Generate & Play", type="primary",
+                         use_container_width=True, key=f"tts_{sel_num}"):
+                with st.spinner("Generating speech via Smallest.ai…"):
+                    try:
+                        tts_resp = requests.post(
+                            "https://api.smallest.ai/waves/v1/tts",
+                            headers={
+                                "Authorization": f"Bearer {config.SMALLEST_API_KEY}",
+                                "Content-Type": "application/json",
+                                "Accept": "audio/wav",
+                            },
+                            json={
+                                "text": narrative,
+                                "voice_id": "meher",
+                                "model": "lightning_v3.1_pro",
+                                "sample_rate": 24000,
+                                "speed": 1.0,
+                                "language": "en",
+                                "output_format": "wav",
+                            },
+                            timeout=20,
+                        )
+                        if tts_resp.status_code == 200:
+                            st.audio(tts_resp.content, format="audio/wav")
+                            st.success("✅ Audio ready — press play above.")
+                        else:
+                            st.error(f"TTS error {tts_resp.status_code}: {tts_resp.text}")
+                    except Exception as e:
+                        st.error(f"TTS request failed: {e}")
+
+            st.markdown("<hr style='border-color:#1E293B;margin:20px 0'>", unsafe_allow_html=True)
+
+            # ── STT card ───────────────────────────────────────
+            st.markdown(
+                "<div style='background:#0F2027;border:1px solid #7C3AED;border-radius:12px;"
+                "padding:20px 22px;margin-bottom:16px'>"
+                "<p style='color:#C4B5FD;font-size:11px;font-weight:700;letter-spacing:1px;margin:0 0 4px'>"
+                "VOICE QUERY</p>"
+                "<p style='color:#F1F5F9;font-size:15px;font-weight:600;margin:0 0 4px'>"
+                "🎤 Ask a question about this invoice</p>"
+                "<p style='color:#64748B;font-size:12px;margin:0'>Record your question — "
+                "Smallest.ai transcribes it, then Gemini answers using the invoice data.</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("<p style='color:#94A3B8;font-size:13px;margin:0 0 8px'>"
+                        "Click the button below, speak your question, then click Stop.</p>",
+                        unsafe_allow_html=True)
+
+            voice_query = mic_recorder(
+                start_prompt="🎤  Click to Start Recording",
+                stop_prompt="⏹  Click to Stop",
+                just_once=True,
+                use_container_width=True,
+                format="webm",
+                key=f"stt_{sel_num}",
+            )
+
+            if voice_query and voice_query.get("bytes"):
+                audio_bytes = voice_query["bytes"]
+                st.markdown(
+                    f"<p style='color:#475569;font-size:12px'>Recorded {len(audio_bytes):,} bytes</p>",
+                    unsafe_allow_html=True,
+                )
+
+                if len(audio_bytes) < 1000:
+                    st.warning("Recording too short — please speak clearly for at least 1 second.")
+                else:
+                    with st.spinner("Transcribing with Smallest.ai…"):
+                        try:
+                            stt_resp = requests.post(
+                                "https://api.smallest.ai/waves/v1/pulse/get_text?language=en",
+                                headers={
+                                    "Authorization": f"Bearer {config.SMALLEST_API_KEY}",
+                                    "Content-Type": "application/octet-stream",
+                                },
+                                data=audio_bytes,
+                                timeout=15,
+                            )
+                            if stt_resp.status_code == 200:
+                                transcribed = stt_resp.json().get("transcription", "").strip()
+                            else:
+                                transcribed = ""
+                                st.error(f"Transcription error {stt_resp.status_code}: {stt_resp.text}")
+                        except Exception as e:
+                            transcribed = ""
+                            st.error(f"Request failed: {e}")
+
+                    if transcribed:
+                        st.markdown(
+                            f"<div style='background:#1E293B;border-left:3px solid #7C3AED;"
+                            f"border-radius:6px;padding:10px 14px;margin:8px 0'>"
+                            f"<p style='color:#C4B5FD;font-size:11px;font-weight:700;margin:0 0 2px'>"
+                            f"YOU ASKED</p>"
+                            f"<p style='color:#F1F5F9;font-size:14px;margin:0'>&ldquo;{transcribed}&rdquo;</p>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        with st.spinner("Gemini is answering…"):
+                            try:
+                                from services.gemini_service import _call_with_retry
+                                answer = _call_with_retry(
+                                    model=config.GEMINI_MODEL,
+                                    contents=(
+                                        f"You are a helpful assistant for invoice platform Sentinel.\n"
+                                        f"Invoice data:\n{json.dumps(inv, default=str)}\n\n"
+                                        f"Question: {transcribed}\n\n"
+                                        f"Answer in 2-3 sentences, clearly and directly."
+                                    ),
+                                )
+                                st.markdown(
+                                    f"<div style='background:#0B2818;border-left:3px solid #16A34A;"
+                                    f"border-radius:6px;padding:12px 14px;margin:8px 0'>"
+                                    f"<p style='color:#4ADE80;font-size:11px;font-weight:700;margin:0 0 4px'>"
+                                    f"SENTINEL ANSWER</p>"
+                                    f"<p style='color:#E2E8F0;font-size:14px;margin:0'>{answer.text}</p>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            except Exception as e:
+                                st.error(f"Could not generate answer: {e}")
+                    elif len(audio_bytes) >= 1000:
+                        st.warning("No speech detected in the recording. Please try again and speak clearly.")

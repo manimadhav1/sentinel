@@ -62,3 +62,6 @@ SUPPORTED_EXTENSIONS = [".pdf", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg"
 for _d in [UPLOADS_DIR, PROCESSED_DIR, INVOICES_DIR,
            PDF_OUTPUT_DIR, EXCEL_OUTPUT_DIR, CONTRACTS_DIR, MASTER_DATA_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
+
+# ── Smallest.ai ────────────────────────────────────────────────────────────────
+SMALLEST_API_KEY = os.getenv("SMALLEST_API_KEY", "")

@@ -274,6 +274,101 @@ class SentinelPipeline:
         )
         return result
 
+    def run_batch(self, file_path) -> list[PipelineResult]:
+        """
+        Process a multi-row Excel file.  Each row is parsed in Python (no Gemini)
+        and run through stages 2–5 of the pipeline independently.
+        Returns one PipelineResult per employee row.
+        """
+        from utils.excel_batch import parse_batch
+        from pathlib import Path as _Path
+
+        doc_results = parse_batch(file_path)
+        all_results = []
+        for doc_result in doc_results:
+            result = PipelineResult(
+                document=doc_result,
+                pipeline_confidence=doc_result.confidence,
+            )
+
+            DatabaseService.log_event(
+                "DOCUMENT_PROCESSED",
+                invoice_number=_Path(file_path).stem,
+                stage="document",
+                status=doc_result.status,
+                confidence=doc_result.confidence,
+                message=f"Batch row: {doc_result.metadata.get('row_index')}",
+            )
+
+            if doc_result.status == "FAILED":
+                exc = ExceptionEngine.process(doc_result)
+                result.exception = exc
+                result.pipeline_confidence = exc.pipeline_confidence
+                all_results.append(self._route(result, exc, _Path(file_path)))
+                continue
+
+            # Stage 2
+            proc_result = ProcessingEngine.process(doc_result)
+            result.processing = proc_result
+            if proc_result.status == "FAILED":
+                exc = ExceptionEngine.process(doc_result, proc_result)
+                result.exception = exc
+                result.pipeline_confidence = exc.pipeline_confidence
+                all_results.append(self._route(result, exc, _Path(file_path)))
+                continue
+
+            # Stage 3
+            existing = self._get_existing_invoices(doc_result)
+            val_result = ValidationEngine.process(doc_result, proc_result, existing)
+            result.validation = val_result
+
+            # Stage 4
+            exc = ExceptionEngine.process(doc_result, proc_result, val_result)
+            result.exception = exc
+            result.pipeline_confidence = exc.pipeline_confidence
+
+            if exc.routing == RoutingDecision.DUPLICATE_RETURN and existing:
+                inv_db = existing[0]
+                result.invoice_number = inv_db["invoice_number"]
+                result.pdf_path       = inv_db.get("pdf_path", "")
+                result.excel_path     = inv_db.get("excel_path", "")
+                result.is_duplicate   = True
+                synthetic = EngineResult(stage="invoice", status="SUCCESS")
+                synthetic.data = inv_db
+                result.invoice = synthetic
+                all_results.append(result)
+                continue
+
+            if exc.routing in (RoutingDecision.HUMAN_REVIEW, RoutingDecision.HARD_REJECT):
+                all_results.append(self._route(result, exc, _Path(file_path)))
+                continue
+
+            # Stage 5
+            exception_summary = [e.correction_applied for e in exc.exceptions if e.correction_applied]
+            sequence   = DatabaseService.next_sequence(doc_result.data["client"]["client_id"])
+            inv_result = InvoiceEngine.process(
+                doc_result, proc_result, val_result, sequence,
+                pipeline_confidence=exc.pipeline_confidence,
+                exception_summary=exception_summary,
+            )
+            result.invoice = inv_result
+
+            if inv_result.status == "SUCCESS":
+                DatabaseService.save_invoice(inv_result.data)
+                result.invoice_number = inv_result.data["invoice_number"]
+                result.pdf_path       = inv_result.data.get("pdf_path", "")
+                result.excel_path     = inv_result.data.get("excel_path", "")
+                DatabaseService.log_event(
+                    "INVOICE_GENERATED",
+                    invoice_number=inv_result.data["invoice_number"],
+                    stage="invoice", status="SUCCESS",
+                    confidence=exc.pipeline_confidence,
+                )
+
+            all_results.append(result)
+
+        return all_results
+
     def _get_existing_invoices(self, doc_result: EngineResult) -> list[dict]:
         try:
             emp_id    = doc_result.data["employee"]["employee_id"]

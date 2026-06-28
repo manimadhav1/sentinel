@@ -635,15 +635,143 @@ st.markdown(
 )
 st.markdown("<br>", unsafe_allow_html=True)
 
+file_bytes = uploaded.read()
+
+# ── Detect multi-row Excel BEFORE saving ────────────────────────────────────
+from utils.excel_batch import is_multi_row_excel as _is_batch
+import tempfile, os as _os
+_tmp_path = None
+_is_batch_mode = False
+
+if uploaded.name.lower().endswith((".xlsx", ".xls")):
+    # Peek at row count without saving permanently yet
+    import io
+    _tmp = tempfile.NamedTemporaryFile(suffix=Path(uploaded.name).suffix, delete=False)
+    _tmp.write(file_bytes)
+    _tmp.flush()
+    _tmp_path = _tmp.name
+    _tmp.close()
+    _is_batch_mode = _is_multi_row_excel(_tmp_path) if 'is_multi_row_excel' in dir() else _is_batch(_tmp_path)
+
+if _is_batch_mode:
+    import pandas as _pd_check
+    _row_count = len(_pd_check.read_excel(_tmp_path).dropna(how="all"))
+    st.markdown(
+        f"<div style='background:#0D2240;border:1px solid #2563EB;border-radius:8px;"
+        f"padding:12px 18px;color:#93C5FD;margin:4px 0'>"
+        f"📊 <b>Batch mode detected</b> — {_row_count} employee rows found. "
+        f"Sentinel will generate an invoice for each employee.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
+
 if not st.button("⚡ Process Document", type="primary", use_container_width=True):
     st.stop()
 
-file_path = save_upload(uploaded.read(), uploaded.name)
+file_path = save_upload(file_bytes, uploaded.name)
+if _tmp_path:
+    try: _os.unlink(_tmp_path)
+    except Exception: pass
 
-# ─────────────────────────────────────────────────────────────
-# PIPELINE PROGRESS
-# ─────────────────────────────────────────────────────────────
 st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════════
+# BATCH MODE — multi-row Excel
+# ════════════════════════════════════════════════════════════════
+if _is_batch_mode:
+    st.markdown("<h3 style='color:#F1F5F9;margin-bottom:12px'>Batch Processing</h3>", unsafe_allow_html=True)
+    prog_bar    = st.progress(0)
+    status_area = st.empty()
+
+    with st.spinner("Processing all employees…"):
+        pipeline = SentinelPipeline()
+        batch_results = pipeline.run_batch(file_path)
+
+    prog_bar.progress(1.0)
+    status_area.empty()
+
+    # ── Batch summary card ─────────────────────────────────────
+    n_ok  = sum(1 for r in batch_results if r.success or r.is_duplicate)
+    n_rev = sum(1 for r in batch_results if r.routed_to_review)
+    n_dup = sum(1 for r in batch_results if r.is_duplicate)
+    n_tot = len(batch_results)
+
+    st.markdown(
+        f"<div style='background:#0F2027;border:1px solid #2563EB;border-radius:12px;"
+        f"padding:16px 22px;margin:0 0 16px;display:flex;gap:32px;align-items:center'>"
+        f"<div><p style='color:#94A3B8;font-size:11px;font-weight:700;letter-spacing:1px;margin:0'>BATCH COMPLETE</p>"
+        f"<p style='color:#F1F5F9;font-size:18px;font-weight:800;margin:4px 0'>{n_tot} employees processed</p></div>"
+        f"<div style='display:flex;gap:20px'>"
+        f"<div><p style='color:#4ADE80;font-size:22px;font-weight:800;margin:0'>{n_ok}</p>"
+        f"<p style='color:#94A3B8;font-size:11px;margin:0'>Invoices</p></div>"
+        f"<div><p style='color:#FCD34D;font-size:22px;font-weight:800;margin:0'>{n_rev}</p>"
+        f"<p style='color:#94A3B8;font-size:11px;margin:0'>Review</p></div>"
+        f"<div><p style='color:#64748B;font-size:22px;font-weight:800;margin:0'>{n_dup}</p>"
+        f"<p style='color:#94A3B8;font-size:11px;margin:0'>Duplicate</p></div>"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Per-row results ────────────────────────────────────────
+    for i, r in enumerate(batch_results):
+        doc_data = r.document.data or {}
+        emp = (doc_data.get("employee") or {})
+        cli = (doc_data.get("client") or {})
+        emp_name = emp.get("name", f"Row {i+2}")
+        cli_name = cli.get("company_name", "—")
+
+        if r.success:
+            inv_data = r.invoice.data or {}
+            billing  = inv_data.get("billing", {})
+            cur      = billing.get("currency", "AED")
+            total    = billing.get("total_amount", 0)
+            icon, border, label = "✅", "#16A34A", f"{r.invoice_number} — {cur} {total:,.2f}"
+        elif r.is_duplicate:
+            icon, border, label = "♻️", "#475569", f"{r.invoice_number} — already exists"
+        elif r.routed_to_review:
+            icon, border, label = "🔍", "#D97706", f"Sent to Review Queue #{r.review_queue_id}"
+        else:
+            icon, border, label = "❌", "#DC2626", "Processing failed"
+
+        with st.expander(f"{icon} {emp_name} → {cli_name}   {label}", expanded=False):
+            if r.success:
+                inv_data = r.invoice.data or {}
+                billing  = inv_data.get("billing", {})
+                from utils.invoice_html import render_invoice_html
+                html = render_invoice_html({**inv_data, "billing": billing})
+                st.components.v1.html(html, height=600, scrolling=True)
+                pdf_p = r.pdf_path
+                if pdf_p and Path(pdf_p).exists():
+                    with open(pdf_p, "rb") as f:
+                        st.download_button("📄 Download PDF", f.read(),
+                            file_name=Path(pdf_p).name, mime="application/pdf",
+                            key=f"batch_pdf_{i}", type="primary")
+            elif r.routed_to_review:
+                st.warning(f"Sent to Review Queue #{r.review_queue_id}. Confidence: {r.pipeline_confidence:.0%}")
+                if r.validation and r.validation.errors:
+                    for e in r.validation.errors:
+                        st.error(f"⛔ {e}")
+            elif r.is_duplicate:
+                st.info(f"Invoice {r.invoice_number} already generated for this employee/period.")
+            else:
+                st.error("Processing failed.")
+                for e in r.document.errors:
+                    st.error(f"⛔ {e}")
+
+    # Store batch state
+    st.session_state["sentinel_state"] = {
+        "_processed": True,
+        "_batch": True,
+        "batch_count": n_tot,
+        "invoices_generated": n_ok,
+        "review_count": n_rev,
+    }
+    st.info("👉 Go to **Invoice Preview** to see all generated invoices across clients.")
+    st.stop()
+
+# ════════════════════════════════════════════════════════════════
+# SINGLE FILE MODE — pipeline progress
+# ════════════════════════════════════════════════════════════════
 st.markdown("<h3 style='color:#F1F5F9;margin-bottom:12px'>Pipeline Progress</h3>", unsafe_allow_html=True)
 
 _ph = {k: st.empty() for k in PIPELINE_STAGES}
