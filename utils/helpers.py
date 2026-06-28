@@ -1,10 +1,11 @@
 from __future__ import annotations
 from datetime import date, datetime
-from config import EXCHANGE_RATES_TO_INR, CURRENCY_SYMBOLS, INVOICE_PREFIX
+from config import CURRENCY_SYMBOLS, INVOICE_PREFIX
+from utils.exchange_rates import get_rates_to_inr
 
 
 def convert_to_inr(amount: float, currency: str) -> float:
-    rate = EXCHANGE_RATES_TO_INR.get(currency.upper(), 1.0)
+    rate = get_rates_to_inr().get(currency.upper(), 1.0)
     return round(amount * rate, 2)
 
 

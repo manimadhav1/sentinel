@@ -8,7 +8,7 @@ from models.schema import (
     Employee, Client, Contract, TimesheetEntry, ExtractedDocument
 )
 from models.validation import EngineResult, AmbiguousField
-from services.gemini_service import call_gemini
+from services.gemini_service import call_gemini, verify_ambiguous_fields
 from utils.file_utils import detect_file_type, is_supported
 from utils.logger import get_logger
 from config import (
@@ -121,6 +121,55 @@ class DocumentEngine:
                 f"Fields backfilled from master data: {', '.join(resolved_fields)}"
             )
 
+        # ── Second-pass verification for ambiguous critical fields ─────────────
+        critical_ambiguous = [
+            af for af in result.ambiguous_fields
+            if af.field_name not in NON_CRITICAL
+            and "task_description" not in af.field_name
+        ]
+        if critical_ambiguous:
+            verification = verify_ambiguous_fields(
+                file_path=file_path,
+                file_type=file_type,
+                extraction=raw,
+                ambiguous_fields=[
+                    {
+                        "field": af.field_name,
+                        "extracted_value": af.extracted_value,
+                        "confidence": af.confidence,
+                        "reason": af.reason,
+                        "suggested_value": af.suggested_value,
+                    }
+                    for af in critical_ambiguous
+                ],
+            )
+            corrections = verification.get("corrections", {})
+            if corrections:
+                raw = DocumentEngine._apply_corrections(raw, corrections)
+                result.metadata["verification_corrections"] = corrections
+                result.metadata["verification_notes"] = verification.get("verification_notes", "")
+                # Re-score confidence with corrections applied
+                verified_fields = [
+                    f for f, c in corrections.items()
+                    if float(c.get("confidence", 0)) >= 0.80
+                ]
+                if verified_fields:
+                    boost = min(0.10, 0.025 * len(verified_fields))
+                    result.confidence = min(1.0, result.confidence + boost)
+                    overall_confidence = result.confidence
+                    # Remove now-resolved fields from ambiguous list
+                    result.ambiguous_fields = [
+                        af for af in result.ambiguous_fields
+                        if not any(
+                            vf in af.field_name
+                            for vf in verified_fields
+                        )
+                    ]
+                    result.add_warning(
+                        f"Verification pass resolved {len(verified_fields)} ambiguous field(s): "
+                        f"{', '.join(verified_fields)}"
+                    )
+
         # ── Build Pydantic models ──────────────────────────────────────────────
         try:
             doc = DocumentEngine._build_document(raw)
@@ -149,6 +198,32 @@ class DocumentEngine:
             f"review={result.requires_human_review}"
         )
         return result
+
+    # ── Apply verification corrections ────────────────────────────────────────
+
+    @staticmethod
+    def _apply_corrections(raw: dict, corrections: dict) -> dict:
+        """
+        Merge second-pass Gemini corrections back into the raw extraction dict.
+        Supports dot-notation keys like "employee.employee_id" or "billing_period_start".
+        Only applies when verification confidence exceeds the original.
+        """
+        raw = dict(raw)
+        for field_key, correction in corrections.items():
+            confirmed = correction.get("confirmed_value")
+            if confirmed is None:
+                continue
+            parts = field_key.split(".")
+            if len(parts) == 1:
+                raw[field_key] = confirmed
+            elif len(parts) == 2:
+                section, subfield = parts
+                if section in raw and isinstance(raw[section], dict):
+                    raw[section] = dict(raw[section])
+                    raw[section][subfield] = confirmed
+                elif section not in raw:
+                    raw[section] = {subfield: confirmed}
+        return raw
 
     # ── Master-data backfill ───────────────────────────────────────────────────
 
@@ -263,11 +338,38 @@ class DocumentEngine:
             try: return int(str(d)[:4])
             except: return 0
 
-        if not bp_s or not bp_e or abs(_yr(bp_s) - today.year) > 1:
-            first = today.replace(day=1)
-            last  = today.replace(day=calendar.monthrange(today.year, today.month)[1])
-            raw["billing_period_start"] = first.strftime("%Y-%m-%d")
-            raw["billing_period_end"]   = last.strftime("%Y-%m-%d")
+        bp_s_date = _parse_date(bp_s)
+        bp_e_date = _parse_date(bp_e)
+
+        if bp_s_date and bp_e_date and abs(bp_s_date.year - today.year) <= 1:
+            # Document has valid dates within ±1 year — trust them exactly as-is
+            pass
+        else:
+            # Dates are missing or year is wildly wrong — try to infer from timesheet
+            ts_dates = []
+            for entry in (raw.get("timesheet") or []):
+                d = _parse_date(entry.get("date"))
+                if d and abs(d.year - today.year) <= 1:
+                    ts_dates.append(d)
+
+            if ts_dates:
+                ref_first = min(ts_dates).replace(day=1)
+                ref_last_month = max(ts_dates)
+                last_day = calendar.monthrange(ref_last_month.year, ref_last_month.month)[1]
+                ref_last = ref_last_month.replace(day=last_day)
+                raw["billing_period_start"] = ref_first.strftime("%Y-%m-%d")
+                raw["billing_period_end"]   = ref_last.strftime("%Y-%m-%d")
+            else:
+                # Fall back to prior month — invoices are submitted in arrears
+                if today.month == 1:
+                    prior_year, prior_month = today.year - 1, 12
+                else:
+                    prior_year, prior_month = today.year, today.month - 1
+                first = date(prior_year, prior_month, 1)
+                last  = date(prior_year, prior_month,
+                             calendar.monthrange(prior_year, prior_month)[1])
+                raw["billing_period_start"] = first.strftime("%Y-%m-%d")
+                raw["billing_period_end"]   = last.strftime("%Y-%m-%d")
             resolved.append("billing_period")
 
         return raw, resolved

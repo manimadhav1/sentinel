@@ -107,8 +107,8 @@ class ProcessingEngine:
         total_inr = total_amount
 
         if currency != "INR":
-            from config import EXCHANGE_RATES_TO_INR
-            rate_to_inr = EXCHANGE_RATES_TO_INR.get(currency, 1.0)
+            from utils.exchange_rates import get_rates_to_inr
+            rate_to_inr = get_rates_to_inr().get(currency, 1.0)
             total_inr = round(total_amount * rate_to_inr, 2)
             notes.append(f"Currency: {currency} → INR @ {rate_to_inr}")
 

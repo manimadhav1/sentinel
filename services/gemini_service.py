@@ -198,6 +198,123 @@ def call_gemini(file_path: Path, file_type: str) -> dict:
     return extracted
 
 
+_CLIENT_PROTOCOLS = {
+    "CL001": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 20, "po_required": True,  "po_format": "PO-AD-#####",      "valid_working_days": "20-26", "rate_tolerance": 1},
+    "CL002": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": True,  "po_format": "PHD-PO-2026-###",  "valid_working_days": "20-26", "rate_tolerance": 0, "special": "no handwritten docs"},
+    "CL003": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 25, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 0},
+    "CL004": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 10, "po_required": True,  "po_format": "ADE-PO-######",   "valid_working_days": "20-26", "rate_tolerance": 0, "special": "HSE sign-off required for OT"},
+    "CL005": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 1},
+    "CL006": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 8,  "po_required": True,  "po_format": "CGB-FIN-####",    "valid_working_days": "20-26", "rate_tolerance": 0, "special": "dual sign-off required"},
+    "CL007": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 30, "po_required": True,  "po_format": "BHL-PO-####",     "valid_working_days": "20-26", "rate_tolerance": 1, "special": "OT must include shift ID"},
+    "CL008": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 25, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 0, "special": "handwritten docs need stamp"},
+    "CL009": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": True,  "po_format": "SPG-PO-2026-###", "valid_working_days": "20-26", "rate_tolerance": 1},
+    "CL010": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 35, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 1},
+}
+
+_VERIFICATION_PROMPT = """
+You are a senior document verification specialist for an enterprise staffing invoice system.
+
+A first AI pass extracted data from a document but flagged the following AMBIGUOUS FIELDS that need verification:
+
+AMBIGUOUS FIELDS TO VERIFY:
+{ambiguous_json}
+
+FIRST PASS EXTRACTION (full context):
+{extraction_json}
+
+CLIENT PROTOCOLS & GUIDELINES for {client_id}:
+{protocols_json}
+
+Your task:
+1. Re-examine EACH ambiguous field carefully using all context clues in the extraction
+2. Apply the client protocols to validate or correct values (e.g., OT multiplier, PO format)
+3. If billing_period is ambiguous, use the timesheet dates as ground truth
+4. For employee/client IDs: cross-reference names, PO numbers, and contract IDs in the extraction
+5. Correct values only when you have evidence — do NOT guess without justification
+
+Return ONLY valid JSON in this exact format:
+{{
+  "corrections": {{
+    "field_name": {{
+      "confirmed_value": <corrected or confirmed value>,
+      "confidence": <0.0 to 1.0>,
+      "reason": "<evidence for this value>"
+    }}
+  }},
+  "overall_verification_confidence": <0.0 to 1.0>,
+  "verification_notes": "<summary of what was verified and how>"
+}}
+
+If you cannot improve confidence on a field, still include it with the original value and your reasoning.
+Return ONLY the JSON object — no markdown, no explanation.
+"""
+
+
+def verify_ambiguous_fields(
+    file_path: Path,
+    file_type: str,
+    extraction: dict,
+    ambiguous_fields: list[dict],
+) -> dict:
+    """
+    Second-pass Gemini call to verify and correct ambiguous fields.
+    Returns a dict of field_name → corrected value for fields where confidence improved.
+    """
+    if not ambiguous_fields:
+        return {}
+
+    client_id = (extraction.get("client") or {}).get("client_id", "UNKNOWN")
+    protocols = _CLIENT_PROTOCOLS.get(client_id, {})
+
+    import json as _json
+    prompt = _VERIFICATION_PROMPT.format(
+        ambiguous_json=_json.dumps(ambiguous_fields, indent=2),
+        extraction_json=_json.dumps(extraction, indent=2, default=str),
+        client_id=client_id,
+        protocols_json=_json.dumps(protocols, indent=2) if protocols else "Not available — apply general staffing guidelines",
+    )
+
+    logger.info(f"Running verification pass for {len(ambiguous_fields)} ambiguous field(s) | client={client_id}")
+
+    try:
+        if file_type == "image":
+            mime, data = _encode_image(file_path)
+            response = _call_with_retry(
+                model=GEMINI_MODEL,
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=base64.b64decode(data), mime_type=mime),
+                ],
+            )
+        elif file_type == "pdf":
+            pdf_bytes = file_path.read_bytes()
+            response = _call_with_retry(
+                model=GEMINI_MODEL,
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                ],
+            )
+        else:
+            # For tabular formats, text-only is sufficient — the extraction already has content
+            response = _call_with_retry(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+
+        result = _extract_json(response.text)
+        corrections = result.get("corrections", {})
+        logger.info(
+            f"Verification complete — {len(corrections)} field(s) resolved | "
+            f"confidence={result.get('overall_verification_confidence', 'N/A')}"
+        )
+        return result
+
+    except Exception as exc:
+        logger.warning(f"Verification pass failed ({exc}) — continuing with first-pass extraction")
+        return {}
+
+
 def _read_tabular(file_path: Path, file_type: str) -> str:
     """Convert Excel/CSV to plain text for prompt injection."""
     import pandas as pd
