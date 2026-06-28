@@ -42,4 +42,6 @@ class Invoice(BaseModel):
     pdf_path: Optional[str] = None
     excel_path: Optional[str] = None
     status: str = "GENERATED"          # GENERATED | DISPATCHED | PAID | FLAGGED
+    pipeline_confidence: float = 1.0   # end-to-end confidence propagated from all stages
+    exception_summary: list[str] = Field(default_factory=list)  # auto-corrections applied
     created_at: datetime = Field(default_factory=datetime.utcnow)

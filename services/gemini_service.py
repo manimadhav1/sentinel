@@ -198,18 +198,10 @@ def call_gemini(file_path: Path, file_type: str) -> dict:
     return extracted
 
 
-_CLIENT_PROTOCOLS = {
-    "CL001": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 20, "po_required": True,  "po_format": "PO-AD-#####",      "valid_working_days": "20-26", "rate_tolerance": 1},
-    "CL002": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": True,  "po_format": "PHD-PO-2026-###",  "valid_working_days": "20-26", "rate_tolerance": 0, "special": "no handwritten docs"},
-    "CL003": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 25, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 0},
-    "CL004": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 10, "po_required": True,  "po_format": "ADE-PO-######",   "valid_working_days": "20-26", "rate_tolerance": 0, "special": "HSE sign-off required for OT"},
-    "CL005": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 1},
-    "CL006": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 8,  "po_required": True,  "po_format": "CGB-FIN-####",    "valid_working_days": "20-26", "rate_tolerance": 0, "special": "dual sign-off required"},
-    "CL007": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 30, "po_required": True,  "po_format": "BHL-PO-####",     "valid_working_days": "20-26", "rate_tolerance": 1, "special": "OT must include shift ID"},
-    "CL008": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 25, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 0, "special": "handwritten docs need stamp"},
-    "CL009": {"ot_multiplier": 1.25,"ot_cap_monthly_hours": 15, "po_required": True,  "po_format": "SPG-PO-2026-###", "valid_working_days": "20-26", "rate_tolerance": 1},
-    "CL010": {"ot_multiplier": 1.5, "ot_cap_monthly_hours": 35, "po_required": False,                                   "valid_working_days": "20-26", "rate_tolerance": 1},
-}
+def _load_client_protocols() -> dict:
+    """Load per-client rules from client_protocols.json at call time (cached by lru_cache in loader)."""
+    from utils.client_protocols import load_protocols
+    return load_protocols()
 
 _VERIFICATION_PROMPT = """
 You are a senior document verification specialist for an enterprise staffing invoice system.
@@ -264,14 +256,19 @@ def verify_ambiguous_fields(
         return {}
 
     client_id = (extraction.get("client") or {}).get("client_id", "UNKNOWN")
-    protocols = _CLIENT_PROTOCOLS.get(client_id, {})
+    protocols = _load_client_protocols().get(client_id, {})
 
     import json as _json
+    proto_text = (
+        _json.dumps(protocols, indent=2)
+        if protocols
+        else "Not available — apply general staffing guidelines"
+    )
     prompt = _VERIFICATION_PROMPT.format(
         ambiguous_json=_json.dumps(ambiguous_fields, indent=2),
         extraction_json=_json.dumps(extraction, indent=2, default=str),
         client_id=client_id,
-        protocols_json=_json.dumps(protocols, indent=2) if protocols else "Not available — apply general staffing guidelines",
+        protocols_json=proto_text,
     )
 
     logger.info(f"Running verification pass for {len(ambiguous_fields)} ambiguous field(s) | client={client_id}")

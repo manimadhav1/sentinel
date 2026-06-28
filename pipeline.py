@@ -5,6 +5,7 @@ from pathlib import Path
 from engines.document_engine import DocumentEngine
 from engines.processing_engine import ProcessingEngine
 from engines.validation_engine import ValidationEngine
+from engines.exception_engine import ExceptionEngine, ExceptionResult, RoutingDecision
 from engines.invoice_engine import InvoiceEngine
 from services.database_service import DatabaseService
 from models.validation import EngineResult
@@ -15,27 +16,31 @@ logger = get_logger("pipeline")
 
 @dataclass
 class PipelineResult:
-    document:   EngineResult
-    processing: EngineResult | None = None
-    validation: EngineResult | None = None
-    invoice:    EngineResult | None = None
-    invoice_number: str = ""
-    pdf_path:   str = ""
-    excel_path: str = ""
-    routed_to_review: bool = False
-    review_queue_id:  int | None = None
-    is_duplicate:     bool = False
+    document:          EngineResult
+    processing:        EngineResult | None = None
+    validation:        EngineResult | None = None
+    exception:         ExceptionResult | None = None
+    invoice:           EngineResult | None = None
+    invoice_number:    str = ""
+    pdf_path:          str = ""
+    excel_path:        str = ""
+    routed_to_review:  bool = False
+    review_queue_id:   int | None = None
+    is_duplicate:      bool = False
+    pipeline_confidence: float = 1.0
 
     @property
     def success(self) -> bool:
         return (
-            self.invoice is not None and
-            self.invoice.status == "SUCCESS" and
-            not self.routed_to_review
+            self.invoice is not None
+            and self.invoice.status == "SUCCESS"
+            and not self.routed_to_review
         )
 
     @property
     def final_status(self) -> str:
+        if self.is_duplicate:
+            return "DUPLICATE"
         if self.routed_to_review:
             return "REVIEW_REQUIRED"
         if self.invoice and self.invoice.status == "SUCCESS":
@@ -46,25 +51,36 @@ class PipelineResult:
         return "UNKNOWN"
 
     def summary(self) -> dict:
+        last = (
+            self.invoice or self.validation
+            or self.processing or self.document
+        )
         return {
-            "status":           self.final_status,
-            "invoice_number":   self.invoice_number,
-            "pdf_path":         self.pdf_path,
-            "excel_path":       self.excel_path,
-            "routed_to_review": self.routed_to_review,
-            "review_queue_id":  self.review_queue_id,
-            "document_confidence": self.document.confidence,
-            "errors":  (self.invoice or self.validation or
-                        self.processing or self.document).errors,
-            "warnings":(self.invoice or self.validation or
-                        self.processing or self.document).warnings,
+            "status":               self.final_status,
+            "invoice_number":       self.invoice_number,
+            "pdf_path":             self.pdf_path,
+            "excel_path":           self.excel_path,
+            "routed_to_review":     self.routed_to_review,
+            "review_queue_id":      self.review_queue_id,
+            "is_duplicate":         self.is_duplicate,
+            "pipeline_confidence":  self.pipeline_confidence,
+            "document_confidence":  self.document.confidence,
+            "errors":               last.errors if last else [],
+            "warnings":             last.warnings if last else [],
+            "exception_routing":    self.exception.routing.value if self.exception else None,
+            "exception_count":      len(self.exception.exceptions) if self.exception else 0,
         }
 
 
 class SentinelPipeline:
     """
-    Orchestrates the full invoice automation pipeline.
-    Document → Processing → Validation → Invoice → Database
+    Five-stage pipeline with ExceptionEngine as the sole routing authority.
+
+    Stage 1 — DocumentEngine   : AI extraction + backfill + verification
+    Stage 2 — ProcessingEngine : Billing calculation (pure Python)
+    Stage 3 — ValidationEngine : 14 business-rule checks
+    Stage 4 — ExceptionEngine  : Classify exceptions, auto-correct, decide routing
+    Stage 5 — InvoiceEngine    : PDF + ERP Excel generation
     """
 
     def __init__(self):
@@ -74,17 +90,16 @@ class SentinelPipeline:
         file_path = Path(file_path)
         logger.info(f"Pipeline started: {file_path.name}")
 
-        result = PipelineResult(document=EngineResult(stage="document",
-                                                       status="PENDING"))
-
         # ── Stage 1: Document Engine ───────────────────────────────────────────
         doc_result = DocumentEngine.process(file_path)
-        result.document = doc_result
+        result = PipelineResult(
+            document=doc_result,
+            pipeline_confidence=doc_result.confidence,
+        )
 
-        _inv_ref = file_path.stem  # temporary reference until invoice number known
         DatabaseService.log_event(
             "DOCUMENT_PROCESSED",
-            invoice_number=_inv_ref,
+            invoice_number=file_path.stem,
             stage="document",
             status=doc_result.status,
             confidence=doc_result.confidence,
@@ -92,12 +107,10 @@ class SentinelPipeline:
         )
 
         if doc_result.status == "FAILED":
-            logger.error(f"Document stage failed: {doc_result.errors}")
-            return result
-
-        # Route to human review if confidence too low
-        if doc_result.requires_human_review:
-            return self._route_to_review(result, doc_result, file_path)
+            exc = ExceptionEngine.process(doc_result)
+            result.exception = exc
+            result.pipeline_confidence = exc.pipeline_confidence
+            return self._route(result, exc, file_path)
 
         # ── Stage 2: Processing Engine ─────────────────────────────────────────
         proc_result = ProcessingEngine.process(doc_result)
@@ -111,8 +124,10 @@ class SentinelPipeline:
         )
 
         if proc_result.status == "FAILED":
-            logger.error(f"Processing stage failed: {proc_result.errors}")
-            return result
+            exc = ExceptionEngine.process(doc_result, proc_result)
+            result.exception = exc
+            result.pipeline_confidence = exc.pipeline_confidence
+            return self._route(result, exc, file_path)
 
         # ── Stage 3: Validation Engine ─────────────────────────────────────────
         existing = self._get_existing_invoices(doc_result)
@@ -127,46 +142,67 @@ class SentinelPipeline:
             message=f"Overall: {val_result.data.get('overall') if val_result.data else 'N/A'}",
         )
 
-        if val_result.status == "FAILED":
-            # Check if failure is purely a duplicate — return the existing invoice
-            if val_result.errors and all("Duplicate" in e for e in val_result.errors):
-                existing = self._get_existing_invoices(doc_result)
-                if existing:
-                    inv_db = existing[0]
-                    result.invoice_number = inv_db["invoice_number"]
-                    result.pdf_path       = inv_db.get("pdf_path", "")
-                    result.excel_path     = inv_db.get("excel_path", "")
-                    result.routed_to_review = False
-                    result.is_duplicate     = True
-                    # Attach a synthetic invoice result so success=True
-                    synthetic = EngineResult(stage="invoice", status="SUCCESS")
-                    synthetic.data = inv_db
-                    result.invoice = synthetic
-                    result.validation = val_result
-                    logger.info(f"Duplicate detected — returning existing {inv_db['invoice_number']}")
-                    return result
-            return self._route_to_review(result, val_result, file_path)
+        # ── Stage 4: Exception Engine ─────────────────────────────────────────
+        exc = ExceptionEngine.process(doc_result, proc_result, val_result)
+        result.exception = exc
+        result.pipeline_confidence = exc.pipeline_confidence
 
-        if val_result.requires_human_review:
-            return self._route_to_review(result, val_result, file_path)
+        DatabaseService.log_event(
+            "EXCEPTION_EVALUATED",
+            stage="exception",
+            status=exc.routing.value,
+            confidence=exc.pipeline_confidence,
+            message=(
+                f"routing={exc.routing.value} | "
+                f"exceptions={len(exc.exceptions)} | "
+                f"priority={exc.review_priority}"
+            ),
+        )
 
-        # ── Stage 4: Invoice Engine ────────────────────────────────────────────
+        # ── Routing decision ───────────────────────────────────────────────────
+        if exc.routing == RoutingDecision.DUPLICATE_RETURN:
+            if existing:
+                inv_db = existing[0]
+                result.invoice_number = inv_db["invoice_number"]
+                result.pdf_path       = inv_db.get("pdf_path", "")
+                result.excel_path     = inv_db.get("excel_path", "")
+                result.is_duplicate   = True
+                synthetic = EngineResult(stage="invoice", status="SUCCESS")
+                synthetic.data = inv_db
+                result.invoice = synthetic
+                logger.info(f"Duplicate — returning existing {inv_db['invoice_number']}")
+                return result
+            # No existing found despite duplicate flag — fall through to review
+            exc.review_reason = "Duplicate flag raised but no existing invoice found"
+
+        if exc.routing in (RoutingDecision.HUMAN_REVIEW, RoutingDecision.HARD_REJECT):
+            return self._route(result, exc, file_path)
+
+        # AUTO_PROCEED or AUTO_CORRECTED → generate invoice
+        # ── Stage 5: Invoice Engine ────────────────────────────────────────────
+        exception_summary = [
+            e.correction_applied for e in exc.exceptions if e.correction_applied
+        ]
         sequence   = DatabaseService.next_sequence(doc_result.data["client"]["client_id"])
-        inv_result = InvoiceEngine.process(doc_result, proc_result, val_result, sequence)
+        inv_result = InvoiceEngine.process(
+            doc_result, proc_result, val_result, sequence,
+            pipeline_confidence=exc.pipeline_confidence,
+            exception_summary=exception_summary,
+        )
         result.invoice = inv_result
 
         if inv_result.status == "FAILED":
             logger.error(f"Invoice stage failed: {inv_result.errors}")
             return result
 
-        # ── Stage 5: Persist to database ──────────────────────────────────────
+        # ── Stage 6: Persist ──────────────────────────────────────────────────
         DatabaseService.save_invoice(inv_result.data)
         DatabaseService.log_event(
             "INVOICE_GENERATED",
             invoice_number=inv_result.data["invoice_number"],
             stage="invoice",
             status="SUCCESS",
-            confidence=1.0,
+            confidence=exc.pipeline_confidence,
             message=f"PDF: {inv_result.data.get('pdf_path')}",
         )
 
@@ -176,56 +212,69 @@ class SentinelPipeline:
 
         logger.info(
             f"Pipeline complete: {result.invoice_number} | "
-            f"status={result.final_status}"
+            f"status={result.final_status} | "
+            f"pipeline_confidence={result.pipeline_confidence:.2f}"
         )
         return result
 
-    def _route_to_review(
+    # ── Routing helpers ────────────────────────────────────────────────────────
+
+    def _route(
         self,
         result: PipelineResult,
-        failed_stage: EngineResult,
+        exc: ExceptionResult,
         file_path: Path,
     ) -> PipelineResult:
-        priority = failed_stage.metadata.get("priority", "NORMAL")
-        raw_data = failed_stage.data or {}
+        """Route to human review queue using ExceptionEngine classification."""
+        doc_result = result.document
+        raw_data   = doc_result.data or {}
+        emp_name   = (raw_data.get("employee") or {}).get("name", "")
+        cli_name   = (raw_data.get("client")   or {}).get("company_name", "")
 
-        # Extract employee/client names if available
-        emp_name = ""
-        cli_name = ""
-        if failed_stage.data:
-            emp_name = (failed_stage.data.get("employee") or {}).get("name", "")
-            cli_name = (failed_stage.data.get("client") or {}).get("company_name", "")
+        ambiguous_fields = [af.model_dump() for af in doc_result.ambiguous_fields]
+        all_errors   = (result.validation or result.processing or result.document).errors
+        all_warnings = (result.validation or result.processing or result.document).warnings
 
         queue_id = DatabaseService.add_to_review_queue(
-            stage=failed_stage.stage,
-            confidence=failed_stage.confidence,
-            errors=failed_stage.errors,
-            warnings=failed_stage.warnings,
-            ambiguous_fields=[af.model_dump() for af in failed_stage.ambiguous_fields],
-            raw_data=raw_data,
+            stage=exc.exceptions[0].rule if exc.exceptions else "unknown",
+            confidence=exc.pipeline_confidence,
+            errors=all_errors,
+            warnings=all_warnings,
+            ambiguous_fields=ambiguous_fields,
+            raw_data={
+                **raw_data,
+                "exception_summary": exc.to_dict(),
+            },
             source_file=str(file_path),
             employee_name=emp_name,
             client_name=cli_name,
-            priority=priority,
+            priority=exc.review_priority,
         )
+
         DatabaseService.log_event(
             "ROUTED_TO_REVIEW",
-            stage=failed_stage.stage,
+            stage="exception",
             status="REVIEW_REQUIRED",
-            confidence=failed_stage.confidence,
-            message=f"Queue ID: {queue_id} | Priority: {priority}",
+            confidence=exc.pipeline_confidence,
+            message=(
+                f"Queue ID: {queue_id} | "
+                f"routing={exc.routing.value} | "
+                f"priority={exc.review_priority} | "
+                f"reason={exc.review_reason[:80]}"
+            ),
         )
 
         result.routed_to_review = True
         result.review_queue_id  = queue_id
         logger.warning(
-            f"Routed to human review: queue_id={queue_id} "
-            f"stage={failed_stage.stage} confidence={failed_stage.confidence:.2f}"
+            f"Routed to review: queue_id={queue_id} | "
+            f"routing={exc.routing.value} | "
+            f"priority={exc.review_priority} | "
+            f"pipeline_confidence={exc.pipeline_confidence:.2f}"
         )
         return result
 
     def _get_existing_invoices(self, doc_result: EngineResult) -> list[dict]:
-        """Fetch existing invoices for duplicate detection."""
         try:
             emp_id    = doc_result.data["employee"]["employee_id"]
             client_id = doc_result.data["client"]["client_id"]

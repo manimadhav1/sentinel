@@ -24,6 +24,8 @@ class InvoiceEngine:
         proc_result: EngineResult,
         val_result: EngineResult,
         sequence: int | None = None,
+        pipeline_confidence: float = 1.0,
+        exception_summary: list[str] | None = None,
     ) -> EngineResult:
         """
         Runs only after validation passes.
@@ -74,6 +76,8 @@ class InvoiceEngine:
             billing_period_end=doc.billing_period_end,
             billing=billing,
             status="GENERATED",
+            pipeline_confidence=round(pipeline_confidence, 3),
+            exception_summary=exception_summary or [],
         )
 
         # ── Generate PDF ───────────────────────────────────────────────────────

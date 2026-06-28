@@ -38,10 +38,12 @@ class ProcessingEngine:
             result.add_error(f"Billing calculation error: {e}")
             return result
 
+        result.confidence = ProcessingEngine._compute_confidence(doc, billing, result)
         result.data = json.loads(billing.model_dump_json())
         logger.info(
             f"Processing complete | employee={doc.employee.name} | "
-            f"total={billing.total_amount} {billing.currency}"
+            f"total={billing.total_amount} {billing.currency} | "
+            f"confidence={result.confidence:.2f}"
         )
         return result
 
@@ -142,6 +144,31 @@ class ProcessingEngine:
             line_items=line_items,
             billing_notes=notes,
         )
+
+    # ── Processing confidence ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_confidence(
+        doc: ExtractedDocument,
+        billing: BillingResult,
+        result: EngineResult,
+    ) -> float:
+        score = 1.0
+        # Timesheet was synthesised from monthly aggregate, not extracted day-by-day
+        if any("Synthesised" in (e.task_description or "") for e in doc.timesheet):
+            score -= 0.10
+        # Contracted hours were missing — we used actual hours as proxy
+        if not doc.contract.contracted_hours:
+            score -= 0.05
+        # Overtime billed despite contract prohibition (will be caught by validation too)
+        if billing.overtime_hours > 0 and not doc.contract.overtime_allowed:
+            score -= 0.08
+        # Exchange rate conversion introduces minor uncertainty
+        if billing.currency != "INR":
+            score -= 0.02
+        # Each processing warning reduces confidence slightly
+        score -= 0.03 * len(result.warnings)
+        return max(0.65, round(score, 3))
 
     # ── Contract scenario handlers ─────────────────────────────────────────────
 

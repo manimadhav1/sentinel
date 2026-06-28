@@ -15,8 +15,9 @@ PROCESSED_DIR   = RUNTIME_DIR / "processed"
 INVOICES_DIR    = RUNTIME_DIR / "invoices"
 DATABASE_PATH   = RUNTIME_DIR / "database.db"
 
-CONTRACTS_DIR   = DATA_DIR / "contracts"
-MASTER_DATA_DIR = DATA_DIR / "master_data"
+CONTRACTS_DIR        = DATA_DIR / "contracts"
+MASTER_DATA_DIR      = DATA_DIR / "master_data"
+CLIENT_PROTOCOLS_PATH = MASTER_DATA_DIR / "client_protocols.json"
 
 PDF_OUTPUT_DIR   = OUTPUT_DIR / "pdf"
 EXCEL_OUTPUT_DIR = OUTPUT_DIR / "excel"
