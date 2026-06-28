@@ -8,7 +8,6 @@ from utils.file_utils import save_upload
 
 st.set_page_config(page_title="Upload — Sentinel", page_icon="📤", layout="wide")
 
-# ── Shared CSS (hide default nav) ──────────────────────────────────────────────
 st.markdown("""
 <style>
 [data-testid="stSidebarNav"] { display: none !important; }
@@ -17,6 +16,12 @@ st.markdown("""
 [data-testid="stSidebar"] a { color: #CBD5E1 !important; text-decoration: none;
     display: block; padding: 8px 12px; border-radius: 6px; margin: 2px 0; font-size: 14px; }
 [data-testid="stSidebar"] a:hover { background: #1E3A5F !important; color: #fff !important; }
+.result-card {
+    background: #1E293B; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155; margin: 8px 0;
+}
+.conf-bar-wrap { background: #334155; border-radius: 4px; height: 8px; margin-top: 4px; }
+.conf-bar      { background: #2563EB; border-radius: 4px; height: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -30,140 +35,274 @@ with st.sidebar:
     st.page_link("pages/04_dashboard.py",         label="📊  Dashboard")
 
 st.markdown("<h2 style='color:#F1F5F9'>📤 Upload & Process</h2>", unsafe_allow_html=True)
-st.markdown("<p style='color:#94A3B8'>Upload any timesheet document. Sentinel processes it automatically.</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#94A3B8'>Upload any timesheet. Sentinel auto-generates the invoice if confidence ≥ 75%.</p>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
 
 uploaded = st.file_uploader(
     "Drop your timesheet here",
     type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"],
-    help="Supports PDF, Excel, CSV, and images",
+    help="Supports PDF, Excel, CSV, and images (handwritten or typed)",
 )
 
 if not uploaded:
-    st.info("📂 Waiting for upload. Supported formats: PDF · Excel · CSV · Image")
+    # Show supported formats
+    st.markdown("""
+    <div style='background:#1E293B;border-radius:12px;padding:24px;text-align:center;border:2px dashed #334155;margin-top:16px'>
+        <div style='font-size:40px;margin-bottom:12px'>📂</div>
+        <p style='color:#94A3B8;margin:0'>Drop any timesheet document above</p>
+        <p style='color:#475569;font-size:13px;margin:8px 0 0'>PDF &nbsp;·&nbsp; Excel (XLSX/XLS) &nbsp;·&nbsp; CSV &nbsp;·&nbsp; PNG/JPG (typed or handwritten)</p>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
-st.success(f"✓ File received: **{uploaded.name}** ({uploaded.size / 1024:.1f} KB)")
+st.markdown(
+    f"<div style='background:#0F2027;border:1px solid #2563EB;border-radius:8px;padding:12px 16px;color:#93C5FD'>"
+    f"📎 <b>{uploaded.name}</b> &nbsp; <span style='color:#475569'>({uploaded.size/1024:.1f} KB)</span>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
+st.markdown("<br>", unsafe_allow_html=True)
 
-if st.button("⚡ Process Document", type="primary", use_container_width=True):
-    file_path = save_upload(uploaded.read(), uploaded.name)
+if not st.button("⚡ Process Document", type="primary", use_container_width=True):
+    st.stop()
 
-    st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
-    st.markdown("<h3 style='color:#F1F5F9'>Pipeline Progress</h3>", unsafe_allow_html=True)
+file_path = save_upload(uploaded.read(), uploaded.name)
 
+# ── Pipeline stages ────────────────────────────────────────────────────────────
+st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
+st.markdown("<h3 style='color:#F1F5F9'>Pipeline Progress</h3>", unsafe_allow_html=True)
+
+stages = {
+    "document":   ("📄", "Document Engine",   "Reading & extracting with Gemini AI"),
+    "processing": ("⚙️",  "Processing Engine", "Calculating billing & overtime"),
+    "validation": ("✅", "Validation Engine", "Checking 14 business rules"),
+    "invoice":    ("📋", "Invoice Engine",    "Generating PDF & ERP Excel"),
+    "database":   ("💾", "Database",          "Saving to audit record"),
+}
+placeholders = {k: st.empty() for k in stages}
+
+def render_stage(stage, status, detail=""):
+    icon_s = {"pending":"⏳","running":"🔄","done":"✅","failed":"❌","skipped":"⏭️","warn":"⚠️"}.get(status,"⏳")
+    color  = {"done":"#16A34A","failed":"#DC2626","running":"#2563EB",
+               "skipped":"#334155","warn":"#D97706","pending":"#1E293B"}.get(status,"#1E293B")
+    icon, label, sub = stages[stage]
+    detail_html = f"<br><span style='font-size:12px;color:#94A3B8;margin-left:24px'>{detail}</span>" if detail else ""
+    placeholders[stage].markdown(
+        f"<div style='padding:10px 14px;border-radius:8px;border-left:4px solid {color};"
+        f"background:#1E293B;margin:4px 0;color:#E2E8F0'>"
+        f"{icon_s} <b>{icon} {label}</b>"
+        f"<span style='color:#475569;font-size:12px'> — {sub}</span>"
+        f"{detail_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+for s in stages:
+    render_stage(s, "pending")
+
+render_stage("document", "running")
+with st.spinner("Processing your document…"):
     pipeline = SentinelPipeline()
+    result   = pipeline.run(file_path)
 
-    stages = {
-        "document":   ("📄", "Document Engine", "Reading file with Gemini AI"),
-        "processing": ("⚙️",  "Processing Engine", "Calculating billing & overtime"),
-        "validation": ("✅", "Validation Engine", "Checking 14 business rules"),
-        "invoice":    ("📋", "Invoice Engine", "Generating PDF & ERP Excel"),
-        "database":   ("💾", "Database", "Saving to audit record"),
-    }
-    placeholders = {k: st.empty() for k in stages}
+# Update all stage statuses
+doc = result.document
+pd_  = result.processing
+vd_  = result.validation
+inv_ = result.invoice
 
-    def render_stage(stage, status, detail=""):
-        icon_map  = {"pending": "⏳", "running": "🔄", "done": "✅", "failed": "❌", "skipped": "⏭️"}
-        color_map = {"pending": "#334155", "running": "#2563EB", "done": "#16A34A",
-                     "failed": "#DC2626", "skipped": "#475569"}
-        icon, label, sub = stages[stage]
-        s_icon  = icon_map.get(status, "⏳")
-        color   = color_map.get(status, "#334155")
-        detail_html = f"<br><span style='font-size:12px;color:#94A3B8'>{detail}</span>" if detail else ""
-        placeholders[stage].markdown(
-            f"<div style='padding:10px 14px;border-radius:8px;border-left:4px solid {color};"
-            f"background:#1E293B;margin:4px 0;color:#E2E8F0'>"
-            f"{s_icon} <b>{icon} {label}</b> <span style='color:#64748B;font-size:12px'>— {sub}</span>"
-            f"{detail_html}</div>",
-            unsafe_allow_html=True,
-        )
+if doc.status == "FAILED":
+    render_stage("document",   "failed",  doc.errors[0] if doc.errors else "Extraction failed")
+    for s in ["processing","validation","invoice","database"]: render_stage(s, "skipped")
+else:
+    conf = doc.confidence
+    conf_color = "#16A34A" if conf >= 0.90 else "#D97706" if conf >= 0.75 else "#DC2626"
+    render_stage("document", "done", f"Confidence: <b style='color:{conf_color}'>{conf:.0%}</b>")
 
-    for s in stages:
-        render_stage(s, "pending")
-
-    render_stage("document", "running")
-    with st.spinner("Processing…"):
-        result = pipeline.run(file_path)
-
-    if result.document.status == "FAILED":
-        render_stage("document", "failed", result.document.errors[0] if result.document.errors else "")
-        for s in ["processing", "validation", "invoice", "database"]:
-            render_stage(s, "skipped")
-    elif result.routed_to_review:
-        render_stage("document",   "done",    f"Confidence: {result.document.confidence:.0%}")
-        render_stage("processing", "done" if result.processing else "skipped")
-        render_stage("validation", "failed",  f"Routed to review queue #{result.review_queue_id}")
-        render_stage("invoice",    "skipped")
-        render_stage("database",   "skipped")
+    if pd_:
+        amt = pd_.data.get("total_amount",0) if pd_.data else 0
+        cur = pd_.data.get("currency","") if pd_.data else ""
+        render_stage("processing", "done" if pd_.status=="SUCCESS" else "failed",
+                     f"Total: <b>{cur} {amt:,.2f}</b>")
     else:
-        render_stage("document",   "done", f"Confidence: {result.document.confidence:.0%}")
-        pd = result.processing.data if result.processing and result.processing.data else {}
-        render_stage("processing", "done" if result.processing else "skipped",
-                     f"Total: {pd.get('currency','')} {pd.get('total_amount',0):,.2f}" if pd else "")
-        vd = result.validation.data if result.validation and result.validation.data else {}
-        render_stage("validation", "done" if result.validation else "skipped",
-                     f"{vd.get('passed',0)}/{vd.get('total_checks',0)} checks passed" if vd else "")
-        render_stage("invoice",  "done"   if result.invoice and result.invoice.status == "SUCCESS" else "failed")
-        render_stage("database", "done"   if result.success else "skipped")
+        render_stage("processing", "skipped")
 
-    st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
+    if vd_:
+        chk = vd_.data or {}
+        if vd_.status == "SUCCESS":
+            render_stage("validation", "done",
+                         f"{chk.get('passed',0)}/{chk.get('total_checks',0)} checks passed")
+        else:
+            err = vd_.errors[0] if vd_.errors else "Validation failed"
+            render_stage("validation", "failed" if not result.is_duplicate else "warn",
+                         f"{'Duplicate — existing invoice returned' if result.is_duplicate else err}")
+    else:
+        render_stage("validation", "skipped")
 
-    # ── Result ─────────────────────────────────────────────────────────────────
     if result.success:
-        st.balloons()
-        st.success(f"### ✅ Invoice Generated: **{result.invoice_number}**")
-
-        inv = result.invoice.data if result.invoice and result.invoice.data else {}
-        b   = inv.get("billing", {})
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Amount",  f"{b.get('currency','AED')} {b.get('total_amount',0):,.2f}")
-        c2.metric("Total (INR)",   f"₹{b.get('total_amount_inr',0):,.2f}")
-        c3.metric("Confidence",    f"{result.document.confidence:.0%}")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        dc1, dc2 = st.columns(2)
-        if result.pdf_path and Path(result.pdf_path).exists():
-            with open(result.pdf_path, "rb") as f:
-                dc1.download_button("📄 Download PDF Invoice", data=f.read(),
-                    file_name=Path(result.pdf_path).name, mime="application/pdf",
-                    use_container_width=True)
-        if result.excel_path and Path(result.excel_path).exists():
-            with open(result.excel_path, "rb") as f:
-                dc2.download_button("📊 Download ERP Excel", data=f.read(),
-                    file_name=Path(result.excel_path).name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True)
-
-        st.session_state["last_invoice_number"] = result.invoice_number
-
-        vd = result.validation.data if result.validation and result.validation.data else {}
-        if vd.get("report"):
-            with st.expander("🔍 Validation Report"):
-                for check in vd["report"]:
-                    icon = "✅" if check["passed"] else ("⚠️" if check.get("severity") == "WARNING" else "❌")
-                    st.markdown(f"{icon} **{check['rule']}** — {check['message']}")
-
-        pd = result.processing.data if result.processing and result.processing.data else {}
-        if pd:
-            with st.expander("💰 Billing Breakdown"):
-                cols = st.columns(4)
-                cols[0].metric("Regular Hours",  f"{pd.get('regular_hours',0)}h")
-                cols[1].metric("Overtime Hours", f"{pd.get('overtime_hours',0)}h")
-                cols[2].metric("Subtotal",       f"{pd.get('currency','')} {pd.get('subtotal',0):,.2f}")
-                cols[3].metric("GST",            f"{pd.get('currency','')} {pd.get('gst_amount',0):,.2f}")
-                for note in pd.get("billing_notes", []):
-                    st.caption(f"• {note}")
-
-    elif result.routed_to_review:
-        st.warning(f"### 🔍 Routed to Human Review — Queue #{result.review_queue_id}")
-        st.metric("Confidence Score", f"{result.document.confidence:.0%}")
-        if result.document.ambiguous_fields:
-            st.markdown("**Ambiguous Fields:**")
-            for af in result.document.ambiguous_fields:
-                st.error(f"**{af.field_name}** — {af.reason} (extracted: `{af.extracted_value}`)")
-        st.info("Visit the **Review Queue** page to resolve and regenerate.")
+        render_stage("invoice",  "done")
+        render_stage("database", "done" if not result.is_duplicate else "skipped",
+                     "Already saved" if result.is_duplicate else "")
     else:
-        st.error("### ❌ Processing Failed")
-        for err in result.summary().get("errors", []):
-            st.error(err)
+        render_stage("invoice",  "skipped")
+        render_stage("database", "skipped")
+
+# ── Result section ─────────────────────────────────────────────────────────────
+st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
+
+if result.success:
+    if result.is_duplicate:
+        st.warning(f"**Duplicate document** — this invoice already exists. Showing the existing record.")
+
+    # ── Invoice card ──────────────────────────────────────────────────────────
+    inv_data = result.invoice.data if result.invoice else {}
+    b        = inv_data.get("billing", {})
+    currency = b.get("currency", inv_data.get("currency", "AED"))
+    total    = b.get("total_amount", inv_data.get("total_amount", 0))
+    total_inr= b.get("total_amount_inr", inv_data.get("total_amount_inr", 0))
+
+    st.markdown(
+        f"<div style='background:#0F2027;border:1px solid #16A34A;border-radius:12px;padding:20px;margin:12px 0'>"
+        f"<p style='color:#4ADE80;font-size:12px;margin:0'>INVOICE GENERATED</p>"
+        f"<h2 style='color:#F1F5F9;margin:4px 0'>{result.invoice_number}</h2>"
+        f"<p style='color:#64748B;font-size:13px;margin:0'>Employee: {inv_data.get('employee_name','')} &nbsp;|&nbsp; "
+        f"Client: {inv_data.get('client_name','')} &nbsp;|&nbsp; "
+        f"Period: {inv_data.get('billing_period_start','')} → {inv_data.get('billing_period_end','')}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Key numbers ───────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Amount",     f"{currency} {total:,.2f}")
+    c2.metric("INR Equivalent",   f"₹{total_inr:,.2f}")
+    c3.metric("AI Confidence",    f"{doc.confidence:.0%}")
+    c4.metric("Status",           "DUPLICATE" if result.is_duplicate else "✅ GENERATED")
+
+    # ── Downloads ─────────────────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#94A3B8;font-size:13px;margin-bottom:8px'>📥 DOWNLOAD</p>", unsafe_allow_html=True)
+    dc1, dc2 = st.columns(2)
+
+    pdf_p = result.pdf_path or inv_data.get("pdf_path","")
+    xls_p = result.excel_path or inv_data.get("excel_path","")
+
+    if pdf_p and Path(pdf_p).exists():
+        with open(pdf_p, "rb") as f:
+            dc1.download_button("📄 Download PDF Invoice", data=f.read(),
+                file_name=Path(pdf_p).name, mime="application/pdf",
+                use_container_width=True, type="primary")
+    else:
+        dc1.caption("PDF not available")
+
+    if xls_p and Path(xls_p).exists():
+        with open(xls_p, "rb") as f:
+            dc2.download_button("📊 Download ERP Excel", data=f.read(),
+                file_name=Path(xls_p).name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+    else:
+        dc2.caption("Excel not available")
+
+    st.session_state["last_invoice_number"] = result.invoice_number
+
+    # ── Confidence breakdown ──────────────────────────────────────────────────
+    scores = doc.metadata.get("confidence_scores", {})
+    if scores:
+        with st.expander("🎯 AI Confidence Breakdown"):
+            for field, score in scores.items():
+                if field == "overall": continue
+                try:
+                    pct = float(score)
+                    color = "#4ADE80" if pct >= 0.90 else "#FCD34D" if pct >= 0.75 else "#F87171"
+                    st.markdown(
+                        f"<div style='margin:6px 0'>"
+                        f"<div style='display:flex;justify-content:space-between'>"
+                        f"<span style='color:#CBD5E1;font-size:13px;text-transform:capitalize'>{field}</span>"
+                        f"<span style='color:{color};font-size:13px;font-weight:700'>{pct:.0%}</span>"
+                        f"</div>"
+                        f"<div style='background:#334155;border-radius:4px;height:6px;margin-top:3px'>"
+                        f"<div style='background:{color};border-radius:4px;height:6px;width:{pct*100:.0f}%'></div>"
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
+                except Exception:
+                    pass
+
+    # ── Validation report ─────────────────────────────────────────────────────
+    if vd_ and vd_.data and vd_.data.get("report"):
+        with st.expander("✅ Validation Report — 14 Rules"):
+            for chk in vd_.data["report"]:
+                icon = "✅" if chk["passed"] else ("⚠️" if chk.get("severity")=="WARNING" else "❌")
+                color = "#4ADE80" if chk["passed"] else "#FCD34D" if chk.get("severity")=="WARNING" else "#F87171"
+                st.markdown(
+                    f"<div style='padding:5px 0;border-bottom:1px solid #1E293B'>"
+                    f"{icon} <span style='color:{color};font-weight:600'>{chk['rule']}</span>"
+                    f" <span style='color:#64748B;font-size:12px'>— {chk['message']}</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+    # ── Billing breakdown ─────────────────────────────────────────────────────
+    if pd_ and pd_.data:
+        bd = pd_.data
+        with st.expander("💰 Billing Breakdown"):
+            bc1, bc2, bc3, bc4 = st.columns(4)
+            bc1.metric("Regular Hours",  f"{bd.get('regular_hours',0)}h")
+            bc2.metric("Overtime Hours", f"{bd.get('overtime_hours',0)}h")
+            bc3.metric("Subtotal",       f"{currency} {bd.get('subtotal',0):,.2f}")
+            bc4.metric("GST",            f"{currency} {bd.get('gst_amount',0):,.2f}")
+            for note in bd.get("billing_notes", []):
+                st.caption(f"• {note}")
+
+elif result.routed_to_review:
+    # Determine the real reason for routing
+    conf = doc.confidence
+    failed_stage = result.validation or result.processing or doc
+
+    if result.validation and result.validation.status == "FAILED":
+        route_reason = "Data validation failed — document is missing required fields"
+        route_detail = "The document was read successfully but failed one or more validation checks. A reviewer must fill in the missing data before the invoice can be generated."
+        route_color  = "#B45309"
+    elif conf < 0.75:
+        route_reason = f"AI extraction confidence too low ({conf:.0%})"
+        route_detail = "The document was unclear or had too many ambiguous fields. A reviewer must verify the extracted data before proceeding."
+        route_color  = "#B45309"
+    else:
+        route_reason = "Manual review required"
+        route_detail = "This document has been flagged for human verification before the invoice can be generated."
+        route_color  = "#B45309"
+
+    st.markdown(
+        f"<div style='background:#1C1408;border:1px solid #D97706;border-radius:12px;padding:20px;margin:12px 0'>"
+        f"<p style='color:#FCD34D;font-size:14px;font-weight:700;margin:0 0 6px'>🔍 NEEDS HUMAN REVIEW — Queue #{result.review_queue_id}</p>"
+        f"<p style='color:#FCD34D;font-size:13px;font-weight:600;margin:0 0 4px'>{route_reason}</p>"
+        f"<p style='color:#94A3B8;font-size:12px;margin:0'>{route_detail}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2)
+    c1.metric("AI Confidence Score", f"{conf:.0%}", help="Confidence in the AI's data extraction from the document")
+    c2.metric("Review Queue #", result.review_queue_id)
+
+    errors = failed_stage.errors if failed_stage else []
+    if errors:
+        st.markdown("<p style='color:#F87171;font-weight:600;margin:12px 0 4px'>What the reviewer needs to fix:</p>", unsafe_allow_html=True)
+        for e in errors:
+            st.error(f"⛔ {e}")
+
+    warnings = failed_stage.warnings if failed_stage else []
+    if warnings:
+        for w in warnings[:3]:
+            st.warning(w)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.info("👉 Go to the **Review Queue** page to approve or reject this document.")
+
+else:
+    st.markdown(
+        "<div style='background:#1C0808;border:1px solid #DC2626;border-radius:12px;padding:20px;margin:12px 0'>"
+        "<p style='color:#F87171;font-size:14px;margin:0 0 8px'>❌ PROCESSING FAILED</p></div>",
+        unsafe_allow_html=True,
+    )
+    for e in result.summary().get("errors", []):
+        st.error(e)

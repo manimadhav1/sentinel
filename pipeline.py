@@ -24,6 +24,7 @@ class PipelineResult:
     excel_path: str = ""
     routed_to_review: bool = False
     review_queue_id:  int | None = None
+    is_duplicate:     bool = False
 
     @property
     def success(self) -> bool:
@@ -126,7 +127,27 @@ class SentinelPipeline:
             message=f"Overall: {val_result.data.get('overall') if val_result.data else 'N/A'}",
         )
 
-        if val_result.requires_human_review or val_result.status == "FAILED":
+        if val_result.status == "FAILED":
+            # Check if failure is purely a duplicate — return the existing invoice
+            if val_result.errors and all("Duplicate" in e for e in val_result.errors):
+                existing = self._get_existing_invoices(doc_result)
+                if existing:
+                    inv_db = existing[0]
+                    result.invoice_number = inv_db["invoice_number"]
+                    result.pdf_path       = inv_db.get("pdf_path", "")
+                    result.excel_path     = inv_db.get("excel_path", "")
+                    result.routed_to_review = False
+                    result.is_duplicate     = True
+                    # Attach a synthetic invoice result so success=True
+                    synthetic = EngineResult(stage="invoice", status="SUCCESS")
+                    synthetic.data = inv_db
+                    result.invoice = synthetic
+                    result.validation = val_result
+                    logger.info(f"Duplicate detected — returning existing {inv_db['invoice_number']}")
+                    return result
+            return self._route_to_review(result, val_result, file_path)
+
+        if val_result.requires_human_review:
             return self._route_to_review(result, val_result, file_path)
 
         # ── Stage 4: Invoice Engine ────────────────────────────────────────────

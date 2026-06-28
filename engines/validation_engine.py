@@ -109,30 +109,45 @@ class ValidationEngine:
 
     @staticmethod
     def _check_mandatory_fields(doc: ExtractedDocument, report: ValidationReport) -> None:
-        """Rule 1 — All mandatory fields must be present and non-empty."""
-        missing = []
+        """Rule 1 — Hard blockers: must have employee identity, billing rate, and timesheet."""
+        errors = []
+        warnings = []
 
+        # Hard errors — cannot calculate or identify the invoice without these
         if not doc.employee.name or doc.employee.name.strip().lower() in ("unknown", ""):
-            missing.append("employee.name")
+            errors.append("employee name is missing — cannot identify who to bill")
         if not doc.employee.employee_id or doc.employee.employee_id == "UNKNOWN":
-            missing.append("employee.employee_id")
-        if not doc.client.company_name or doc.client.company_name.strip().lower() in ("unknown", ""):
-            missing.append("client.company_name")
-        if not doc.client.client_id or doc.client.client_id == "UNKNOWN":
-            missing.append("client.client_id")
-        if not doc.contract.contract_id or doc.contract.contract_id == "UNKNOWN":
-            missing.append("contract.contract_id")
+            # If name is known, it's a soft warning (backfill may have missed it)
+            if doc.employee.name and doc.employee.name.strip().lower() not in ("unknown", ""):
+                warnings.append(
+                    f"employee ID not found for '{doc.employee.name}' — "
+                    f"reviewer should confirm the employee ID"
+                )
+            else:
+                errors.append("employee ID is missing — cannot identify which employee to invoice")
         if doc.contract.billing_rate <= 0:
-            missing.append("contract.billing_rate")
+            errors.append("billing rate is 0 or missing — cannot calculate invoice amount")
         if not doc.timesheet:
-            missing.append("timesheet (empty)")
+            errors.append("timesheet is empty — no hours to bill")
 
-        if missing:
+        # Soft warnings — useful but can proceed if company_name is known
+        if not doc.client.client_id or doc.client.client_id == "UNKNOWN":
+            if not doc.client.company_name or doc.client.company_name.strip().lower() in ("unknown", ""):
+                errors.append("client identity missing — no client ID or company name found")
+            else:
+                warnings.append(f"client.client_id unknown (company: {doc.client.company_name})")
+
+        if errors:
             report.add_check(
-                "MANDATORY_FIELDS",
-                passed=False,
-                message=f"Missing mandatory fields: {', '.join(missing)}",
+                "MANDATORY_FIELDS", passed=False,
+                message=f"Missing required fields: {', '.join(errors)}",
                 severity="ERROR",
+            )
+        elif warnings:
+            report.add_check(
+                "MANDATORY_FIELDS", passed=False,
+                message=f"Incomplete fields: {', '.join(warnings)}",
+                severity="WARNING",
             )
         else:
             report.add_check("MANDATORY_FIELDS", passed=True,
@@ -162,8 +177,8 @@ class ValidationEngine:
             report.add_check(
                 "EMPLOYEE_EXISTS", passed=False,
                 message=f"Employee '{doc.employee.name}' (ID: {doc.employee.employee_id}) "
-                        f"not found in master data",
-                severity="ERROR",
+                        f"not found in master data — verify manually",
+                severity="WARNING",
             )
 
     @staticmethod
@@ -190,8 +205,8 @@ class ValidationEngine:
             report.add_check(
                 "CLIENT_EXISTS", passed=False,
                 message=f"Client '{doc.client.company_name}' (ID: {doc.client.client_id}) "
-                        f"not found in master data",
-                severity="ERROR",
+                        f"not found in master data — verify manually",
+                severity="WARNING",
             )
 
     @staticmethod
@@ -266,7 +281,7 @@ class ValidationEngine:
             report.add_check(
                 "CONTRACT_MASTER_MATCH", passed=False,
                 message=f"Contract terms differ from master: {'; '.join(mismatches)}",
-                severity="ERROR",
+                severity="WARNING",
             )
         else:
             report.add_check("CONTRACT_MASTER_MATCH", passed=True,
@@ -316,7 +331,7 @@ class ValidationEngine:
                 issues.append(f"{entry.date}: hours_worked={entry.hours_worked} exceeds 24h/day")
             if entry.overtime_hours < 0:
                 issues.append(f"{entry.date}: overtime_hours cannot be negative")
-            if entry.overtime_hours > entry.hours_worked:
+            if entry.overtime_hours > 0 and entry.overtime_hours > entry.hours_worked:
                 issues.append(
                     f"{entry.date}: overtime_hours ({entry.overtime_hours}) "
                     f"exceeds hours_worked ({entry.hours_worked})"
@@ -514,8 +529,16 @@ class ValidationEngine:
         doc: ExtractedDocument, report: ValidationReport
     ) -> None:
         """Rule 14 — Contract must link the correct employee to the correct client."""
-        mismatches = []
+        # If client_id is UNKNOWN the contract was auto-derived — skip linkage check
+        if doc.client.client_id == "UNKNOWN":
+            report.add_check(
+                "LINKAGE_INTEGRITY", passed=True,
+                message="Client ID unresolved — linkage check skipped (auto-derived contract)",
+                severity="WARNING",
+            )
+            return
 
+        mismatches = []
         if doc.contract.employee_id != doc.employee.employee_id:
             mismatches.append(
                 f"contract.employee_id={doc.contract.employee_id} "
@@ -531,7 +554,7 @@ class ValidationEngine:
             report.add_check(
                 "LINKAGE_INTEGRITY", passed=False,
                 message=f"Contract linkage mismatch: {'; '.join(mismatches)}",
-                severity="ERROR",
+                severity="WARNING",
             )
         else:
             report.add_check(

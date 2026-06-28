@@ -117,12 +117,24 @@ Client ID mapping (apply automatically when you see these codes in the document)
 - CUST001 → CL001, CUST002 → CL002, CUST003 → CL003, CUST004 → CL004,
   CUST005 → CL005, CUST006 → CL006, CUST007 → CL007, CUST008 → CL008
 
+UNIVERSAL DOCUMENT HANDLING — apply regardless of column names or format:
+- Employee identification: look for any column containing "emp", "id", "staff", "worker", "name", "personnel"
+- Client/customer: look for "client", "customer", "cust", "company", "org", "account"
+- Hours worked: look for "hours", "days", "working_days", "days_worked", "duration", "time"
+  → If days are given, multiply by 8 to get hours
+- Billing rate: look for "rate", "salary", "pay", "wage", "cost", "price", "amount_per"
+  → If monthly salary given, divide by total hours to get hourly rate
+- Dates/period: look for "date", "period", "month", "week", "from", "to", "start", "end"
+  → If only a month name or "June 2026" is given, use first and last day of that month
+- Amount/total: look for "amount", "total", "gross", "net", "billed", "invoice"
+
 For payroll/salary documents that lack daily timesheet rows:
-- Set timesheet to [] (the system will synthesise entries from contracted_hours)
-- Set contracted_hours = days_worked * 8 if explicit daily count is given
-- Set billing_rate = basic_salary / contracted_hours if no explicit rate is given
-- Set billing_period_start to the first day of the pay period month
+- Set timesheet to [] (the system will synthesise daily entries from contracted_hours)
+- Set contracted_hours = days_worked * 8 if day count is available
+- Set billing_rate = salary / contracted_hours if no explicit rate exists
+- Set billing_period_start to the 1st of the pay period month
 - Set billing_period_end to the last day of the pay period month
+- Set contract_id to null (system will derive it from employee+client IDs)
 """
 
 

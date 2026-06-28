@@ -31,16 +31,30 @@ st.markdown("<h2 style='color:#F1F5F9'>🔍 Human Review Queue</h2>", unsafe_all
 st.markdown("<p style='color:#94A3B8'>Documents that need manual verification before invoicing.</p>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
 
-# ── Queue stats ────────────────────────────────────────────────────────────────
+# ── Queue stats + clear button ────────────────────────────────────────────────
 pending  = DatabaseService.get_review_queue("PENDING")
 resolved = DatabaseService.get_review_queue("RESOLVED")
 
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
 c1.metric("Pending Review",  len(pending))
-c2.metric("Resolved Today",  len(resolved))
-c3.metric("Total Processed", len(pending) + len(resolved))
+c2.metric("Resolved",        len(resolved))
+c3.metric("Total",           len(pending) + len(resolved))
 
-st.markdown("---")
+with c4:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🗑️ Clear All", type="secondary", use_container_width=True):
+        import sqlite3, sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        import config
+        conn = sqlite3.connect(config.DATABASE_PATH)
+        conn.execute("DELETE FROM review_queue")
+        conn.commit()
+        conn.close()
+        st.success("Queue cleared.")
+        st.rerun()
+
+st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
 
 if not pending:
     st.success("✅ No items pending review. All documents processed automatically.")
@@ -57,40 +71,82 @@ if not pending:
 
 st.markdown(f"### {len(pending)} Item(s) Awaiting Review")
 
+import json as _json
+
 for item in pending:
-    conf   = item.get("confidence", 0)
-    reason = item.get("reason", "")
-    stage  = item.get("stage", "unknown")
+    conf  = item.get("confidence", 0)
+    stage = item.get("stage", "unknown")
 
-    color = "#DC2626" if conf < 0.60 else "#D97706"
-    badge = "🔴 HIGH PRIORITY" if conf < 0.60 else "🟡 NEEDS REVIEW"
+    # Parse errors / ambiguous_fields from JSON strings if needed
+    raw_errors = item.get("errors", "[]")
+    errors = _json.loads(raw_errors) if isinstance(raw_errors, str) else (raw_errors or [])
 
-    emp_label = item.get("employee_name") or item.get("employee_id", "—")
-    cli_label = item.get("client_name")   or item.get("client_id",   "—")
+    raw_af = item.get("ambiguous_fields", "[]")
+    amb    = _json.loads(raw_af) if isinstance(raw_af, str) else (raw_af or [])
+
+    emp_label = item.get("employee_name") or "Unknown Employee"
+    cli_label = item.get("client_name")   or "Unknown Client"
+    src_file  = item.get("source_file", "")
+    fname     = src_file.split("/")[-1] if src_file else "—"
+
+    # Human-readable reason
+    if errors:
+        top_error = errors[0]
+        if "Duplicate" in top_error:
+            reason_human = "⚠️ Duplicate — invoice already generated for this period"
+            badge = "🔴 DUPLICATE"
+        elif "mandatory" in top_error.lower() or "Missing" in top_error:
+            reason_human = "⚠️ Missing required fields — document incomplete"
+            badge = "🟡 INCOMPLETE"
+        elif "outside contract" in top_error.lower() or "expired" in top_error.lower():
+            reason_human = "⚠️ Contract issue — billing period outside contract dates"
+            badge = "🟠 CONTRACT"
+        elif "not found in master" in top_error.lower():
+            reason_human = "⚠️ Unknown employee or client — not in master data"
+            badge = "🔴 UNKNOWN ID"
+        else:
+            reason_human = f"⚠️ Validation failed"
+            badge = "🟡 REVIEW"
+    else:
+        reason_human = f"⚠️ Low confidence ({conf:.0%}) — manual check required"
+        badge = "🟡 LOW CONF"
 
     with st.expander(
-        f"{badge}  Queue #{item['id']} — {emp_label} / {cli_label}  "
-        f"| Conf: {conf:.0%} | Stage: {stage}",
-        expanded=conf < 0.60,
+        f"{badge}  Queue #{item['id']}  |  {fname}  |  Confidence: {conf:.0%}",
+        expanded=True,
     ):
         col_info, col_action = st.columns([2, 1])
 
         with col_info:
-            st.markdown(f"**Confidence:** `{conf:.2f}` ({conf:.0%})")
-            st.markdown(f"**Failed at stage:** `{stage}`")
-            st.markdown(f"**Reason:**\n> {reason}")
+            # Summary card
+            st.markdown(
+                f"<div style='background:#1E293B;border-radius:8px;padding:14px;margin-bottom:12px'>"
+                f"<p style='color:#94A3B8;font-size:12px;margin:0'>WHAT HAPPENED</p>"
+                f"<p style='color:#F1F5F9;font-size:15px;font-weight:600;margin:4px 0'>{reason_human}</p>"
+                f"<p style='color:#64748B;font-size:12px;margin:0'>Stage: <b>{stage}</b> &nbsp;|&nbsp; "
+                f"File: <b>{fname}</b> &nbsp;|&nbsp; Confidence: <b>{conf:.0%}</b></p>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-            if item.get("ambiguous_fields"):
-                st.markdown("**Ambiguous Fields:**")
-                for af in item["ambiguous_fields"]:
-                    field = af if isinstance(af, str) else af.get("field_name", af.get("field", "?"))
-                    reason_af = "" if isinstance(af, str) else af.get("reason", "")
-                    extracted = "" if isinstance(af, str) else af.get("extracted_value", "")
-                    suggested = "" if isinstance(af, str) else af.get("suggested_value", "")
+            # Actual errors
+            if errors:
+                st.markdown("**What needs fixing:**")
+                for e in errors:
+                    st.error(e)
+
+            # Ambiguous fields (only show if non-empty and meaningful)
+            real_amb = [a for a in amb if isinstance(a, dict) and a.get("field_name")]
+            if real_amb:
+                st.markdown("**Uncertain fields extracted from document:**")
+                for af in real_amb:
                     st.warning(
-                        f"**{field}** — {reason_af}  \n"
-                        f"Extracted: `{extracted}` → Suggested: `{suggested}`"
+                        f"**{af.get('field_name')}** — {af.get('reason','')}\n\n"
+                        f"Extracted: `{af.get('extracted_value','—')}` → "
+                        f"Suggested: `{af.get('suggested_value','—')}`"
                     )
+
+            st.caption(f"Created: {item.get('created_at','—')}")
 
         with col_action:
             st.markdown("**Action**")

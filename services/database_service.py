@@ -257,15 +257,22 @@ class DatabaseService:
         return [dict(r) for r in rows]
 
     @staticmethod
-    def resolve_review_item(item_id: int, notes: str = "") -> None:
+    def resolve_review_item(
+        item_id: int,
+        status: str = "RESOLVED",
+        resolver: str = "",
+        notes: str = "",
+    ) -> None:
         now = datetime.utcnow().isoformat()
+        resolved_status = status if status in ("APPROVED", "REJECTED", "RESOLVED") else "RESOLVED"
+        note_text = f"[{resolver}] {notes}".strip(" []") if resolver else notes
         with _conn() as con:
             con.execute("""
                 UPDATE review_queue
-                SET status='RESOLVED', reviewer_notes=?, resolved_at=?
+                SET status=?, reviewer_notes=?, resolved_at=?
                 WHERE id=?
-            """, (notes, now, item_id))
-        logger.info(f"Review item {item_id} resolved")
+            """, (resolved_status, note_text, now, item_id))
+        logger.info(f"Review item {item_id} → {resolved_status}")
 
     # ── Audit Log ──────────────────────────────────────────────────────────────
 

@@ -7,101 +7,73 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global CSS: hide default page nav, style sidebar & cards ──────────────────
 st.markdown("""
 <style>
-/* Hide Streamlit's auto-generated page list in sidebar */
 [data-testid="stSidebarNav"] { display: none !important; }
-
-/* Sidebar background */
 [data-testid="stSidebar"] { background: #0F172A !important; }
 [data-testid="stSidebar"] > div { background: #0F172A !important; }
-
-/* Sidebar text */
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stCaption { color: #94A3B8 !important; }
-
-/* Sidebar page_link buttons */
-[data-testid="stSidebar"] a {
-    color: #CBD5E1 !important;
-    text-decoration: none;
-    display: block;
-    padding: 8px 12px;
-    border-radius: 6px;
-    margin: 2px 0;
-    font-size: 14px;
-}
+[data-testid="stSidebar"] a { color: #CBD5E1 !important; text-decoration: none;
+    display: block; padding: 8px 12px; border-radius: 6px; margin: 2px 0; font-size: 14px; }
 [data-testid="stSidebar"] a:hover { background: #1E3A5F !important; color: #fff !important; }
 
-/* Feature cards — dark theme */
-.feature-card {
+/* Clickable feature cards */
+div[data-testid="column"] .nav-card {
     background: #1E293B;
     border: 1px solid #334155;
     border-radius: 12px;
-    padding: 24px 16px;
+    padding: 28px 16px;
     text-align: center;
-    height: 150px;
+    cursor: pointer;
+    transition: all 0.2s;
+    height: 160px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 10px;
 }
-.feature-card .icon  { font-size: 32px; line-height: 1; }
-.feature-card .title { color: #F1F5F9; font-weight: 700; font-size: 15px; }
-.feature-card .desc  { color: #94A3B8; font-size: 12px; }
+div[data-testid="column"] .nav-card:hover {
+    border-color: #2563EB;
+    background: #1e3a5f;
+    transform: translateY(-2px);
+}
+.nav-card .c-icon  { font-size: 36px; line-height: 1; }
+.nav-card .c-title { color: #F1F5F9; font-weight: 700; font-size: 15px; }
+.nav-card .c-desc  { color: #94A3B8; font-size: 12px; }
 
-/* Status colours */
-.status-valid   { color: #4ADE80; font-weight: 700; }
-.status-invalid { color: #F87171; font-weight: 700; }
-.status-warn    { color: #FCD34D; font-weight: 700; }
-.status-review  { color: #C084FC; font-weight: 700; }
-
-/* Expander border */
-div[data-testid="stExpander"] { border: 1px solid #334155; border-radius: 8px; }
-
-/* Stage progress rows */
-.stage-row {
-    padding: 10px 14px;
-    border-radius: 8px;
-    border-left: 4px solid #334155;
-    background: #1E293B;
-    margin: 6px 0;
-    font-size: 14px;
-    color: #E2E8F0;
+/* Hide default button styling for card buttons */
+div[data-testid="column"] .stButton > button {
+    background: #1E293B !important;
+    border: 1px solid #334155 !important;
+    border-radius: 12px !important;
+    padding: 28px 16px !important;
+    width: 100% !important;
+    height: 160px !important;
+    color: #F1F5F9 !important;
+    font-size: 14px !important;
+    transition: all 0.2s !important;
+}
+div[data-testid="column"] .stButton > button:hover {
+    border-color: #2563EB !important;
+    background: #1e3a5f !important;
+    transform: translateY(-2px) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(
-        "<div style='padding:16px 8px 8px;'>"
-        "<span style='font-size:22px;font-weight:800;color:#F1F5F9'>⚡ Sentinel</span><br>"
-        "<span style='font-size:12px;color:#64748B'>Touchless Invoice Automation</span>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div style='padding:16px 8px 8px'><span style='font-size:22px;font-weight:800;color:#F1F5F9'>⚡ Sentinel</span><br><span style='font-size:11px;color:#475569'>Touchless Invoice Automation</span></div>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1E293B;margin:8px 0'>", unsafe_allow_html=True)
-    st.markdown("<p style='font-size:11px;color:#475569;padding:0 8px;margin:4px 0'>NAVIGATION</p>",
-                unsafe_allow_html=True)
+    st.markdown("<p style='font-size:11px;color:#475569;padding:0 8px;margin:4px 0'>NAVIGATION</p>", unsafe_allow_html=True)
     st.page_link("app.py",                       label="🏠  Home")
     st.page_link("pages/01_upload.py",            label="📤  Upload & Process")
     st.page_link("pages/02_review_queue.py",      label="🔍  Review Queue")
     st.page_link("pages/03_invoice_preview.py",   label="📄  Invoice Preview")
     st.page_link("pages/04_dashboard.py",         label="📊  Dashboard")
     st.markdown("<hr style='border-color:#1E293B;margin:12px 0'>", unsafe_allow_html=True)
-    st.markdown(
-        "<div style='padding:0 8px'>"
-        "<p style='font-size:11px;color:#475569;margin:2px 0'>AI Model: Gemini 2.5 Flash</p>"
-        "<p style='font-size:11px;color:#475569;margin:2px 0'>Engine: Pure Python</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div style='padding:0 8px'><p style='font-size:11px;color:#475569;margin:2px 0'>AI: Gemini 2.5 Flash</p><p style='font-size:11px;color:#475569;margin:2px 0'>Engine: Pure Python</p></div>", unsafe_allow_html=True)
 
-# ── Home page ──────────────────────────────────────────────────────────────────
+# ── Hero ───────────────────────────────────────────────────────────────────────
 st.markdown(
     "<h1 style='color:#F1F5F9;margin-bottom:4px'>⚡ Sentinel</h1>"
     "<p style='color:#94A3B8;font-size:18px;margin-top:0'>Touchless Invoice Automation Platform</p>",
@@ -109,33 +81,37 @@ st.markdown(
 )
 st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns(4)
+# ── Clickable feature cards ────────────────────────────────────────────────────
 cards = [
-    ("📤", "Upload", "PDF · Excel · Image · Handwritten"),
-    ("🤖", "AI Extract", "Gemini reads any document — once"),
-    ("⚙️",  "Process", "14 validation rules · Pure Python"),
-    ("📄", "Invoice", "PDF Invoice · SAP-compatible Excel"),
+    ("📤", "Upload & Process", "PDF · Excel · CSV · Image · Handwritten", "pages/01_upload.py"),
+    ("🤖", "AI Extract",       "Gemini reads any document — once",         "pages/01_upload.py"),
+    ("⚙️",  "Validate",         "14 business rules · Pure Python",          "pages/02_review_queue.py"),
+    ("📄", "Invoice",          "PDF Invoice · SAP-compatible Excel",        "pages/03_invoice_preview.py"),
 ]
-for col, (icon, title, desc) in zip([col1, col2, col3, col4], cards):
-    col.markdown(
-        f"<div class='feature-card'>"
-        f"<div class='icon'>{icon}</div>"
-        f"<div class='title'>{title}</div>"
-        f"<div class='desc'>{desc}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+
+col1, col2, col3, col4 = st.columns(4)
+for col, (icon, title, desc, page) in zip([col1, col2, col3, col4], cards):
+    with col:
+        st.markdown(
+            f"<div class='nav-card'>"
+            f"<div class='c-icon'>{icon}</div>"
+            f"<div class='c-title'>{title}</div>"
+            f"<div class='c-desc'>{desc}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        # Invisible full-width link overlay using page_link
+        st.page_link(page, label=f"Go to {title}", use_container_width=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
-
 st.markdown(
-    "<p style='color:#CBD5E1'><b>Get started:</b> Click <b>Upload & Process</b> in the sidebar.</p>"
+    "<p style='color:#CBD5E1'><b>Get started:</b> Click any card or use the sidebar to navigate.</p>"
     "<blockquote style='border-left:3px solid #2563EB;padding-left:12px;color:#64748B;font-style:italic'>"
     "AI understands documents. Our software understands the business.</blockquote>",
     unsafe_allow_html=True,
 )
 
-# ── Stats strip (if DB has data) ───────────────────────────────────────────────
+# ── Live stats ─────────────────────────────────────────────────────────────────
 try:
     import sys
     from pathlib import Path
@@ -144,7 +120,7 @@ try:
     stats = DatabaseService.get_stats()
     if stats["total_invoices"] > 0:
         st.markdown("<hr style='border-color:#1E293B'>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#64748B;font-size:12px'>LIVE STATS</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#475569;font-size:11px;letter-spacing:1px'>LIVE STATS</p>", unsafe_allow_html=True)
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("Total Invoices",  stats["total_invoices"])
         s2.metric("Total Billed",    f"₹{stats['total_billed_inr']:,.0f}")
